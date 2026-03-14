@@ -1,12 +1,16 @@
-import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchStats, triggerScrape } from '../api/client';
+import { fetchStats, triggerScrape, fetchScrapeStatus } from '../api/client';
 import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader } from 'lucide-react';
 
 export default function Dashboard() {
   const qc = useQueryClient();
   const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: fetchStats });
-  const [scrapeMsg, setScrapeMsg] = useState('');
+  const { data: scrapeStatus } = useQuery({
+    queryKey: ['scrapeStatus'],
+    queryFn: fetchScrapeStatus,
+    refetchInterval: (query) => query.state.data?.running ? 3000 : false,
+    staleTime: 0,
+  });
 
   const scrapeM = useMutation({
     mutationFn: () => triggerScrape({
@@ -14,13 +18,14 @@ export default function Dashboard() {
       location:  'Adelaide',
       max_pages: 3,
     }),
-    onSuccess: (res) => {
-      setScrapeMsg(res.message);
-      qc.invalidateQueries({ queryKey: ['jobs'] });
-      qc.invalidateQueries({ queryKey: ['stats'] });
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scrapeStatus'] });
     },
-    onError: () => setScrapeMsg('Scrape failed. Check backend logs.'),
+    onError: () => {},
   });
+
+  const isRunning = scrapeStatus?.running ?? false;
+  const lastResult = scrapeStatus?.last_result as { scraped?: number; inserted?: number; error?: string } | undefined;
 
   const tiles = [
     { label: 'Total Jobs',  value: stats?.total_jobs    ?? 0,  icon: Briefcase,   color: 'bg-blue-50 text-blue-600' },
@@ -48,14 +53,22 @@ export default function Dashboard() {
         </p>
         <button
           onClick={() => scrapeM.mutate()}
-          disabled={scrapeM.isPending}
+          disabled={isRunning}
           className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
         >
-          {scrapeM.isPending ? <Loader size={16} className="animate-spin" /> : <Play size={16} />}
-          {scrapeM.isPending ? 'Scraping...' : 'Run Scrape Now'}
+          {isRunning ? <Loader size={16} className="animate-spin" /> : <Play size={16} />}
+          {isRunning ? 'Scraping...' : 'Run Scrape Now'}
         </button>
-        {scrapeMsg && (
-          <p className="mt-3 text-sm text-gray-600 bg-gray-50 rounded p-2">{scrapeMsg}</p>
+        {isRunning && (
+          <p className="mt-3 text-sm text-blue-600 bg-blue-50 rounded p-2">Scrape running in the background. You can navigate freely.</p>
+        )}
+        {!isRunning && lastResult && 'inserted' in lastResult && (
+          <p className="mt-3 text-sm text-gray-600 bg-gray-50 rounded p-2">
+            Last scrape: {lastResult.scraped} found, {lastResult.inserted} new jobs added.
+          </p>
+        )}
+        {!isRunning && lastResult && 'error' in lastResult && (
+          <p className="mt-3 text-sm text-red-600 bg-red-50 rounded p-2">Last scrape failed. Check backend logs.</p>
         )}
       </div>
     </div>

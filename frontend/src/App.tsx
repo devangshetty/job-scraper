@@ -1,9 +1,10 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import Dashboard from './components/Dashboard';
 import JobList   from './components/JobList';
 import JobDetail from './components/JobDetail';
-import { LayoutDashboard, List } from 'lucide-react';
+import { LayoutDashboard, List, Loader } from 'lucide-react';
+import { fetchScrapeStatus } from './api/client';
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } },
@@ -14,6 +15,25 @@ const navCls = ({ isActive }: { isActive: boolean }) =>
     isActive ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
   }`;
 
+function ScrapeIndicator() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['scrapeStatus'],
+    queryFn: fetchScrapeStatus,
+    refetchInterval: (query) => query.state.data?.running ? 3000 : false,
+    staleTime: 0,
+  });
+
+  if (!data?.running) return null;
+
+  return (
+    <div className="mx-2 mt-4 flex items-center gap-2 bg-blue-50 text-blue-600 text-xs px-3 py-2 rounded-lg">
+      <Loader size={13} className="animate-spin shrink-0" />
+      <span>Scraping in progress...</span>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
@@ -23,6 +43,7 @@ export default function App() {
             <p className="text-lg font-bold text-gray-800 mb-4 px-2">JobTracker</p>
             <NavLink to="/"     className={navCls}><LayoutDashboard size={16} />Dashboard</NavLink>
             <NavLink to="/jobs" className={navCls}><List size={16} />Job Listings</NavLink>
+            <ScrapeIndicator />
           </aside>
           <main className="ml-52 flex-1 overflow-y-auto">
             <Routes>
