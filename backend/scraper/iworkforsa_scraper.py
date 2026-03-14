@@ -7,10 +7,8 @@ from scraper.parser import clean_text
 
 logger = logging.getLogger(__name__)
 
-BASE_URL   = "https://www.iworkfor.sa.gov.au"
-# navigate to the homepage and click through to job search
-HOME_URL   = f"{BASE_URL}"
-ICT_CATEGORY = "Information/Communication Technology"
+BASE_URL     = "https://www.iworkfor.sa.gov.au"
+ICT_CATEGORY = "Information Technology"
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -20,82 +18,39 @@ USER_AGENTS = [
 ]
 
 
-async def _navigate_to_search(page) -> bool:
-    """Navigate to the homepage and get to the search form."""
-    # try known candidate URLs in order
-    candidates = [
-        f"{BASE_URL}/iworkforsa/job-search.php",
-        f"{BASE_URL}/iworkforsa/",
-        BASE_URL,
-    ]
-    for url in candidates:
-        logger.info(f"iworkforsa: trying URL {url}")
-        await page.goto(url, wait_until="networkidle", timeout=30000)
+async def _get_search_frame(page):
+    """Find the frame containing the search form."""
+    for _ in range(6):  # retry up to 6 times (12 seconds total)
+        for f in page.frames:
+            try:
+                # homepage form has a Classification select
+                el = await f.query_selector("select[name='Classification'], input[name='Keywords'], form")
+                if el:
+                    logger.info(f"iworkforsa: found search form in frame: {f.url}")
+                    return f
+            except Exception:
+                continue
+        logger.info(f"iworkforsa: waiting for search form... frames={len(page.frames)}")
         await asyncio.sleep(2.0)
-        html = await page.content()
-        logger.info(f"iworkforsa: {url} -> first 500 chars: {html[:500]}")
-        if "404" not in html[:200] and "Not Found" not in html[:200]:
-            logger.info(f"iworkforsa: landed on {url}")
-            return True
-    return False
-
-
-async def _get_frame(page):
-    logger.info(f"iworkforsa: total frames = {len(page.frames)}")
-    for i, f in enumerate(page.frames):
-        logger.info(f"iworkforsa: frame[{i}] url={f.url}")
-        try:
-            btn = await f.query_selector("#brsSearchBtn")
-            if btn:
-                logger.info(f"iworkforsa: found search form in frame: {f.url}")
-                return f
-        except Exception:
-            continue
-
-    await asyncio.sleep(5.0)
-    for i, f in enumerate(page.frames):
-        try:
-            btn = await f.query_selector("#brsSearchBtn")
-            if btn:
-                logger.info(f"iworkforsa: found search form in frame after wait: {f.url}")
-                return f
-        except Exception:
-            continue
 
     logger.warning("iworkforsa: falling back to main frame")
     return page.main_frame
 
 
-async def _select_ict_category(frame) -> bool:
-    try:
-        await frame.click("button.ms-choice", timeout=10000)
-        await asyncio.sleep(0.8)
-        await frame.click(
-            f"div.ms-drop li label span:has-text('{ICT_CATEGORY}')",
-            timeout=8000,
-        )
-        await asyncio.sleep(0.5)
-        await frame.click("body")
-        await asyncio.sleep(0.5)
-        logger.info("iworkforsa: ICT category selected")
-        return True
-    except Exception as e:
-        logger.warning(f"iworkforsa: could not select ICT category: {e}")
-        return False
-
-
 async def _extract_job_rows(frame) -> List[Dict]:
     jobs = []
     try:
-        await frame.wait_for_selector("table tr", timeout=15000)
+        await frame.wait_for_selector("table tr td a, .job-result, .search-result", timeout=20000)
     except PWTimeout:
-        logger.warning("iworkforsa: no table rows found after search")
+        # log what we got
+        html = await frame.content()
+        logger.warning(f"iworkforsa: no results found. Page snippet: {html[:1000]}")
         return jobs
 
     rows = await frame.query_selector_all("table tr")
     for row in rows:
         cells = await row.query_selector_all("td")
-        if len(cells) < 4:
+        if len(cells) < 2:
             continue
         try:
             link_el = await cells[0].query_selector("a")
@@ -103,13 +58,17 @@ async def _extract_job_rows(frame) -> List[Dict]:
                 continue
             title  = (await link_el.inner_text()).strip()
             href   = await link_el.get_attribute("href")
-            ref_no = (await cells[1].inner_text()).strip()
-            posted = (await cells[2].inner_text()).strip()
-            agency = (await cells[3].inner_text()).strip()
-
-            if not href:
+            if not href or not title:
                 continue
             job_url = href if href.startswith("http") else BASE_URL + href
+
+            agency = ""
+            posted = ""
+            if len(cells) >= 4:
+                posted = (await cells[2].inner_text()).strip()
+                agency = (await cells[3].inner_text()).strip()
+            elif len(cells) >= 2:
+                agency = (await cells[1].inner_text()).strip()
 
             jobs.append({
                 "job_title":       title,
@@ -134,7 +93,7 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
         frame = page.main_frame
         for f in page.frames:
             try:
-                el = await f.query_selector("#brs_mainContent")
+                el = await f.query_selector("#brs_mainContent, .jobAdPage, h1")
                 if el:
                     frame = f
                     break
@@ -144,7 +103,7 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
         location = ""
         salary   = ""
 
-        bold_els = await frame.query_selector_all("b")
+        bold_els = await frame.query_selector_all("b, strong")
         for el in bold_els:
             label = (await el.inner_text()).strip().lower()
             try:
@@ -158,7 +117,7 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
             elif "salary" in label or "remuneration" in label:
                 salary = value
 
-        desc_el = await frame.query_selector("#brs_mainContent, .main-content, main")
+        desc_el = await frame.query_selector("#brs_mainContent, .jobAdPage, main, article")
         description = ""
         if desc_el:
             description = clean_text(await desc_el.inner_html())
@@ -190,18 +149,40 @@ async def scrape_iworkforsa() -> List[Dict]:
         page = await context.new_page()
 
         try:
-            ok = await _navigate_to_search(page)
-            if not ok:
-                logger.error("iworkforsa: could not find a valid search page URL")
+            logger.info("iworkforsa: loading homepage")
+            await page.goto(BASE_URL, wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(3.0)
+
+            html = await page.content()
+            logger.info(f"iworkforsa: homepage snippet: {html[:800]}")
+
+            frame = await _get_search_frame(page)
+
+            # log all selects to identify the right one
+            selects = await frame.query_selector_all("select")
+            for sel in selects:
+                name = await sel.get_attribute("name")
+                id_  = await sel.get_attribute("id")
+                logger.info(f"iworkforsa: found select name={name} id={id_}")
+
+            # try to select ICT via Classification dropdown
+            try:
+                await frame.select_option("select[name='Classification']", label=ICT_CATEGORY, timeout=5000)
+                logger.info("iworkforsa: Classification set")
+            except Exception as e:
+                logger.warning(f"iworkforsa: Classification select failed: {e}")
+
+            # find and click the search/submit button
+            submit = await frame.query_selector("input[type='submit'], button[type='submit'], input[name='searchButton']")
+            if submit:
+                await submit.click()
+                logger.info("iworkforsa: search submitted")
+                await asyncio.sleep(random.uniform(2.0, 3.5))
+            else:
+                logger.warning("iworkforsa: no submit button found")
+                html2 = await frame.content()
+                logger.info(f"iworkforsa: frame content: {html2[:1000]}")
                 return all_jobs
-
-            frame = await _get_frame(page)
-
-            await _select_ict_category(frame)
-
-            await frame.click("#brsSearchBtn", timeout=10000)
-            await asyncio.sleep(random.uniform(2.0, 3.5))
-            logger.info("iworkforsa: search submitted")
 
             cards     = await _extract_job_rows(frame)
             new_cards = [c for c in cards if c["application_url"] not in seen_urls]
