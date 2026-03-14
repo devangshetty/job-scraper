@@ -70,6 +70,7 @@ async def _extract_job_cards(page) -> List[Dict]:
                 "application_url": job_url,
                 "description":     "",
                 "posted_date":     "",
+                "source":          "seek",
             })
         except Exception as e:
             logger.warning(f"Card parse error: {e}")

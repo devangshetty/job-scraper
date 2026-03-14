@@ -29,8 +29,12 @@ def _save_jobs(raw_jobs: list, source: str) -> tuple:
         ]
         if not new_jobs:
             return len(raw_jobs), 0
+
+        # enforce source tag - scraper should set it but this is the safety net
+        for j in new_jobs:
+            j.setdefault("source", source)
+
         scored = score_jobs_batch(new_jobs)
-        # use INSERT OR IGNORE via raw SQL to be safe against any race duplicates
         with engine.connect() as conn:
             for j in scored:
                 conn.execute(
@@ -38,11 +42,11 @@ def _save_jobs(raw_jobs: list, source: str) -> tuple:
                         INSERT OR IGNORE INTO jobs
                             (job_title, company, location, salary, description,
                              posted_date, application_url, match_score,
-                             matched_skills, missing_skills, is_applied)
+                             matched_skills, missing_skills, is_applied, source)
                         VALUES
                             (:job_title, :company, :location, :salary, :description,
                              :posted_date, :application_url, :match_score,
-                             :matched_skills, :missing_skills, 0)
+                             :matched_skills, :missing_skills, 0, :source)
                     """),
                     {
                         "job_title":       j["job_title"],
@@ -55,6 +59,7 @@ def _save_jobs(raw_jobs: list, source: str) -> tuple:
                         "match_score":     j.get("match_score", 0.0),
                         "matched_skills":  j.get("matched_skills", "[]"),
                         "missing_skills":  j.get("missing_skills", "[]"),
+                        "source":          j.get("source", source),
                     }
                 )
             conn.commit()
