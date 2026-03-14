@@ -24,6 +24,7 @@ class Job(Base):
     is_applied      = Column(Boolean, default=False)
     applied_date    = Column(DateTime)
     notes           = Column(Text)
+    source          = Column(Text)
 
 
 class Setting(Base):
@@ -42,6 +43,7 @@ class JobBase(BaseModel):
     description:     str
     posted_date:     Optional[str] = None
     application_url: str
+    source:          Optional[str] = None
 
 
 class JobOut(JobBase):
@@ -53,6 +55,7 @@ class JobOut(JobBase):
     is_applied:     bool
     applied_date:   Optional[datetime]
     notes:          Optional[str]
+    source:         Optional[str]
 
     class Config:
         from_attributes = True
