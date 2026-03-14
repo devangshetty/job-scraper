@@ -1,6 +1,7 @@
 import logging
 from fastapi import APIRouter, BackgroundTasks
-from database import SessionLocal
+from sqlalchemy import text
+from database import SessionLocal, engine
 from models import Job, SeekScrapeRequest, ScrapeResponse
 from scraper.seek_scraper import scrape_seek
 from scraper.iworkforsa_scraper import scrape_iworkforsa
@@ -19,26 +20,44 @@ def _save_jobs(raw_jobs: list, source: str) -> tuple:
     db = SessionLocal()
     try:
         existing_urls = {r[0] for r in db.query(Job.application_url).all()}
-        new_jobs      = [j for j in raw_jobs if j["application_url"] not in existing_urls]
+        new_jobs = [
+            j for j in raw_jobs
+            if j.get("application_url")
+            and not j["application_url"].lower().startswith("javascript")
+            and j["application_url"] not in existing_urls
+            and j.get("job_title", "").lower() not in {"job title", ""}
+        ]
         if not new_jobs:
             return len(raw_jobs), 0
         scored = score_jobs_batch(new_jobs)
-        db.bulk_save_objects([
-            Job(
-                job_title       = j["job_title"],
-                company         = j["company"],
-                location        = j["location"],
-                salary          = j.get("salary", ""),
-                description     = j["description"],
-                posted_date     = j.get("posted_date", ""),
-                application_url = j["application_url"],
-                match_score     = j.get("match_score"),
-                matched_skills  = j.get("matched_skills", "[]"),
-                missing_skills  = j.get("missing_skills", "[]"),
-            )
-            for j in scored
-        ])
-        db.commit()
+        # use INSERT OR IGNORE via raw SQL to be safe against any race duplicates
+        with engine.connect() as conn:
+            for j in scored:
+                conn.execute(
+                    text("""
+                        INSERT OR IGNORE INTO jobs
+                            (job_title, company, location, salary, description,
+                             posted_date, application_url, match_score,
+                             matched_skills, missing_skills, is_applied)
+                        VALUES
+                            (:job_title, :company, :location, :salary, :description,
+                             :posted_date, :application_url, :match_score,
+                             :matched_skills, :missing_skills, 0)
+                    """),
+                    {
+                        "job_title":       j["job_title"],
+                        "company":         j["company"],
+                        "location":        j["location"],
+                        "salary":          j.get("salary", ""),
+                        "description":     j["description"],
+                        "posted_date":     j.get("posted_date", ""),
+                        "application_url": j["application_url"],
+                        "match_score":     j.get("match_score", 0.0),
+                        "matched_skills":  j.get("matched_skills", "[]"),
+                        "missing_skills":  j.get("missing_skills", "[]"),
+                    }
+                )
+            conn.commit()
         return len(raw_jobs), len(scored)
     except Exception as e:
         logger.error(f"{source} save failed: {e}", exc_info=True)

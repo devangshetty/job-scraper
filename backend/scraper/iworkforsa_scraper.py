@@ -9,8 +9,6 @@ logger = logging.getLogger(__name__)
 
 BASE_URL     = "https://www.iworkfor.sa.gov.au"
 ICT_CATEGORY = "Information/Communication Technology"
-
-# select name confirmed from live page inspection
 CATEGORY_SELECT = "select[name='c_179[]']"
 
 USER_AGENTS = [
@@ -38,27 +36,20 @@ async def _get_search_frame(page):
 
 async def _select_ict_category(frame) -> bool:
     try:
-        # use the confirmed select name from live page
         sel_el = await frame.query_selector(CATEGORY_SELECT)
         if not sel_el:
             logger.warning(f"iworkforsa: {CATEGORY_SELECT} not found")
             return False
 
-        # get all options to find the right label
         options = await sel_el.query_selector_all("option")
         matched = None
         for opt in options:
             text = (await opt.inner_text()).strip()
-            logger.info(f"iworkforsa: category option: '{text}'")
-            if "information" in text.lower() and "communication" in text.lower():
-                val = await opt.get_attribute("value")
+            val  = await opt.get_attribute("value")
+            logger.info(f"iworkforsa: category option: '{text}' value={val}")
+            if "information" in text.lower() and ("communication" in text.lower() or "technology" in text.lower()):
                 matched = val
-                logger.info(f"iworkforsa: matched ICT option value={val}")
-                break
-            elif "information" in text.lower() and "technology" in text.lower():
-                val = await opt.get_attribute("value")
-                matched = val
-                logger.info(f"iworkforsa: matched IT option value={val}")
+                logger.info(f"iworkforsa: matched ICT option: '{text}' value={val}")
                 break
 
         if matched:
@@ -66,11 +57,23 @@ async def _select_ict_category(frame) -> bool:
             logger.info("iworkforsa: ICT category selected")
             return True
         else:
-            logger.warning("iworkforsa: no matching ICT option found in dropdown")
+            logger.warning("iworkforsa: no matching ICT option found")
             return False
     except Exception as e:
         logger.warning(f"iworkforsa: category select failed: {e}")
         return False
+
+
+def _is_valid_job_url(href: str) -> bool:
+    """Return True only for real navigable URLs."""
+    if not href:
+        return False
+    low = href.lower().strip()
+    if low.startswith("javascript"):
+        return False
+    if low.startswith("#"):
+        return False
+    return True
 
 
 async def _extract_job_rows(frame) -> List[Dict]:
@@ -84,6 +87,11 @@ async def _extract_job_rows(frame) -> List[Dict]:
 
     rows = await frame.query_selector_all("table tr")
     for row in rows:
+        # skip header rows (<th> cells)
+        headers = await row.query_selector_all("th")
+        if headers:
+            continue
+
         cells = await row.query_selector_all("td")
         if len(cells) < 2:
             continue
@@ -92,10 +100,14 @@ async def _extract_job_rows(frame) -> List[Dict]:
             if not link_el:
                 continue
             title = (await link_el.inner_text()).strip()
-            href  = await link_el.get_attribute("href") or ""
+            href  = (await link_el.get_attribute("href") or "").strip()
 
-            # skip sort/pagination javascript links and empty hrefs
-            if not href or href.lower().startswith("javascript") or not title:
+            if not title or not _is_valid_job_url(href):
+                continue
+
+            # skip navigation/pagination rows by title
+            skip_titles = {"job title", "next", "last", "first", "previous", "prev"}
+            if title.lower() in skip_titles:
                 continue
 
             job_url = href if href.startswith("http") else BASE_URL + href
