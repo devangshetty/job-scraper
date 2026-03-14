@@ -11,9 +11,11 @@ Scrapes Seek.com.au for software engineering roles and scores them against a res
 
 ### Backend
 
+> **macOS:** Use `python3` instead of `python`. After the venv activates, `python` and `pip` work without the suffix.
+
 ```bash
 cd backend
-python -m venv venv && source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 uvicorn main:app --reload --port 8000
