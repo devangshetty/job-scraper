@@ -14,6 +14,7 @@ export interface Job {
   is_applied:      boolean;
   applied_date:    string | null;
   notes:           string | null;
+  source:          string | null;
 }
 
 export interface JobsResponse {

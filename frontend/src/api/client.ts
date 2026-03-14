@@ -10,6 +10,7 @@ export const fetchJobs = async (params: {
   search?:     string;
   sort_by?:    string;
   sort_order?: string;
+  source?:     string;
   page?:       number;
   page_size?:  number;
 }): Promise<JobsResponse> => {
