@@ -1,90 +1,101 @@
-import json
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+import logging
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from database import get_db
-from models import Job, JobUpdate, StatsOut
+from sqlalchemy import func, text
+from database import SessionLocal
+from models import Job
+from typing import Optional
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+logger = logging.getLogger(__name__)
 
 
-def _deserialize_job(job: Job) -> dict:
-    d = {c.name: getattr(job, c.name) for c in job.__table__.columns}
-    d["matched_skills"] = json.loads(job.matched_skills) if job.matched_skills else []
-    d["missing_skills"] = json.loads(job.missing_skills) if job.missing_skills else []
-    return d
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @router.get("")
 def list_jobs(
-    db:         Session       = Depends(get_db),
-    min_score:  float         = Query(0.0),
-    location:   Optional[str] = None,
-    is_applied: Optional[bool]= None,
-    search:     Optional[str] = None,
-    sort_by:    str           = Query("match_score", enum=["match_score", "scraped_at", "posted_date"]),
-    sort_order: str           = Query("desc", enum=["asc", "desc"]),
-    page:       int           = Query(1, ge=1),
-    page_size:  int           = Query(20, ge=1, le=100),
+    min_score:  float          = Query(0.0),
+    search:     Optional[str]  = Query(None),
+    is_applied: Optional[bool] = Query(None),
+    sort_by:    str            = Query("match_score"),
+    sort_order: str            = Query("desc"),
+    source:     Optional[str]  = Query(None),
+    page:       int            = Query(1, ge=1),
+    page_size:  int            = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
 ):
-    q = db.query(Job)
-    if min_score > 0:
-        q = q.filter(Job.match_score >= min_score)
-    if location:
-        q = q.filter(Job.location.ilike(f"%{location}%"))
+    q = db.query(Job).filter(Job.match_score >= min_score)
+    if search:
+        like = f"%{search}%"
+        q = q.filter((Job.job_title.ilike(like)) | (Job.company.ilike(like)))
     if is_applied is not None:
         q = q.filter(Job.is_applied == is_applied)
-    if search:
-        q = q.filter(Job.job_title.ilike(f"%{search}%") | Job.company.ilike(f"%{search}%"))
+    if source:
+        q = q.filter(Job.source == source)
+
+    sort_col = getattr(Job, sort_by, Job.match_score)
+    q = q.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
 
     total = q.count()
-    col   = getattr(Job, sort_by, Job.match_score)
-    q     = q.order_by(col.desc() if sort_order == "desc" else col.asc())
-    q     = q.offset((page - 1) * page_size).limit(page_size)
-
-    return {"total": total, "page": page, "page_size": page_size, "jobs": [_deserialize_job(j) for j in q.all()]}
+    jobs  = q.offset((page - 1) * page_size).limit(page_size).all()
+    return {"total": total, "jobs": jobs}
 
 
-@router.get("/stats", response_model=StatsOut)
+@router.get("/stats")
 def get_stats(db: Session = Depends(get_db)):
-    total   = db.query(Job).count()
-    avg     = db.query(func.avg(Job.match_score)).scalar() or 0.0
-    applied = db.query(Job).filter(Job.is_applied == True).count()
-    high    = db.query(Job).filter(Job.match_score >= 0.7).count()
-    return StatsOut(total_jobs=total, avg_score=round(float(avg), 4), applied_count=applied, high_match=high)
+    total     = db.query(func.count(Job.id)).scalar()
+    applied   = db.query(func.count(Job.id)).filter(Job.is_applied == True).scalar()
+    avg_score = db.query(func.avg(Job.match_score)).scalar()
+    top_jobs  = (
+        db.query(Job)
+        .filter(Job.match_score >= 0.5)
+        .order_by(Job.match_score.desc())
+        .limit(5)
+        .all()
+    )
+    return {
+        "total_jobs":   total,
+        "applied_jobs": applied,
+        "avg_score":    round(avg_score or 0, 3),
+        "top_jobs":     top_jobs,
+    }
 
 
 @router.get("/{job_id}")
 def get_job(job_id: int, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return _deserialize_job(job)
+    return db.query(Job).filter(Job.id == job_id).first()
 
 
-@router.patch("/{job_id}")
-def update_job(job_id: int, update: JobUpdate, db: Session = Depends(get_db)):
+@router.patch("/{job_id}/apply")
+def mark_applied(job_id: int, db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if update.is_applied is not None:
-        job.is_applied = update.is_applied
-        if update.is_applied:
-            from datetime import datetime
-            job.applied_date = datetime.utcnow()
-    if update.notes is not None:
-        job.notes = update.notes
+    if job:
+        job.is_applied = True
+        db.commit()
+    return {"ok": True}
+
+
+@router.delete("/purge/non-ict")
+def purge_non_ict(db: Session = Depends(get_db)):
+    """Delete iworkforsa jobs that are clearly not ICT (low score + no ICT keywords)."""
+    result = db.execute(text("""
+        DELETE FROM jobs
+        WHERE source = 'iworkforsa'
+        AND match_score < 0.05
+        AND (description NOT LIKE '%software%'
+             AND description NOT LIKE '%developer%'
+             AND description NOT LIKE '%ICT%'
+             AND description NOT LIKE '%technology%'
+             AND description NOT LIKE '%data%'
+             AND description NOT LIKE '%system%'
+             AND description NOT LIKE '%analyst%'
+             AND description NOT LIKE '%engineer%')
+    """))
     db.commit()
-    db.refresh(job)
-    return _deserialize_job(job)
-
-
-@router.delete("/{job_id}")
-def delete_job(job_id: int, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    db.delete(job)
-    db.commit()
-    return {"message": f"Job {job_id} deleted"}
+    return {"deleted": result.rowcount}

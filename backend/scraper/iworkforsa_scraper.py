@@ -7,9 +7,10 @@ from scraper.parser import clean_text
 
 logger = logging.getLogger(__name__)
 
-BASE_URL     = "https://www.iworkfor.sa.gov.au"
-ICT_CATEGORY = "Information/Communication Technology"
-CATEGORY_SELECT = "select[name='c_179[]']"
+BASE_URL         = "https://www.iworkfor.sa.gov.au"
+# value=40666 confirmed from live page option list
+ICT_SELECT_VALUE = "40666"
+CATEGORY_SELECT  = "select[name='c_179[]']"
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -35,37 +36,30 @@ async def _get_search_frame(page):
 
 
 async def _select_ict_category(frame) -> bool:
+    """Set the hidden multiselect to ICT using JavaScript evaluate to bypass visibility."""
     try:
-        sel_el = await frame.query_selector(CATEGORY_SELECT)
-        if not sel_el:
-            logger.warning(f"iworkforsa: {CATEGORY_SELECT} not found")
-            return False
-
-        options = await sel_el.query_selector_all("option")
-        matched = None
-        for opt in options:
-            text = (await opt.inner_text()).strip()
-            val  = await opt.get_attribute("value")
-            logger.info(f"iworkforsa: category option: '{text}' value={val}")
-            if "information" in text.lower() and ("communication" in text.lower() or "technology" in text.lower()):
-                matched = val
-                logger.info(f"iworkforsa: matched ICT option: '{text}' value={val}")
-                break
-
-        if matched:
-            await frame.select_option(CATEGORY_SELECT, value=matched)
-            logger.info("iworkforsa: ICT category selected")
-            return True
-        else:
-            logger.warning("iworkforsa: no matching ICT option found")
-            return False
+        # use JS to set the value directly on the hidden <select multiple>
+        result = await frame.evaluate("""
+            () => {
+                const sel = document.querySelector("select[name='c_179[]']");
+                if (!sel) return 'not_found';
+                for (const opt of sel.options) {
+                    opt.selected = (opt.value === '40666');
+                }
+                // trigger change event so the widget picks it up
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                return 'ok';
+            }
+        """)
+        logger.info(f"iworkforsa: ICT category JS select result: {result}")
+        await asyncio.sleep(0.5)
+        return result == "ok"
     except Exception as e:
-        logger.warning(f"iworkforsa: category select failed: {e}")
+        logger.warning(f"iworkforsa: ICT JS select failed: {e}")
         return False
 
 
 def _is_valid_job_url(href: str) -> bool:
-    """Return True only for real navigable URLs."""
     if not href:
         return False
     low = href.lower().strip()
@@ -87,11 +81,9 @@ async def _extract_job_rows(frame) -> List[Dict]:
 
     rows = await frame.query_selector_all("table tr")
     for row in rows:
-        # skip header rows (<th> cells)
         headers = await row.query_selector_all("th")
         if headers:
             continue
-
         cells = await row.query_selector_all("td")
         if len(cells) < 2:
             continue
@@ -105,7 +97,6 @@ async def _extract_job_rows(frame) -> List[Dict]:
             if not title or not _is_valid_job_url(href):
                 continue
 
-            # skip navigation/pagination rows by title
             skip_titles = {"job title", "next", "last", "first", "previous", "prev"}
             if title.lower() in skip_titles:
                 continue
@@ -128,6 +119,7 @@ async def _extract_job_rows(frame) -> List[Dict]:
                 "application_url": job_url,
                 "description":     "",
                 "posted_date":     posted,
+                "source":          "iworkforsa",
             })
         except Exception as e:
             logger.warning(f"iworkforsa row parse error: {e}")
@@ -225,7 +217,7 @@ async def scrape_iworkforsa() -> List[Dict]:
             for c in new_cards:
                 seen_urls.add(c["application_url"])
 
-            logger.info(f"iworkforsa: {len(new_cards)} new jobs to fetch details for")
+            logger.info(f"iworkforsa: {len(new_cards)} jobs found")
 
             for job in new_cards:
                 detail = await _fetch_job_detail(page, job["application_url"])

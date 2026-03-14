@@ -1,9 +1,15 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { fetchJobs } from '../api/client';
 import type { Job } from '../types';
 import { MapPin, Building2, DollarSign, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+
+const SOURCE_TABS = [
+  { key: 'all',        label: 'All Jobs' },
+  { key: 'seek',       label: 'Seek' },
+  { key: 'iworkforsa', label: 'iWorkForSA' },
+];
 
 function ScoreBadge({ score }: { score: number | null }) {
   if (score === null) return <span className="text-xs text-gray-400">Unscored</span>;
@@ -15,7 +21,9 @@ function ScoreBadge({ score }: { score: number | null }) {
 }
 
 export default function JobList() {
-  const navigate = useNavigate();
+  const navigate     = useNavigate();
+  const queryClient  = useQueryClient();
+  const [source,    setSource]    = useState('all');
   const [minScore,  setMinScore]  = useState(0);
   const [search,    setSearch]    = useState('');
   const [applied,   setApplied]   = useState<string>('all');
@@ -25,13 +33,14 @@ export default function JobList() {
   const appliedFilter = applied === 'applied' ? true : applied === 'not_applied' ? false : undefined;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['jobs', minScore, search, applied, sortBy, page],
+    queryKey: ['jobs', source, minScore, search, applied, sortBy, page],
     queryFn:  () => fetchJobs({
       min_score:  minScore,
       search:     search || undefined,
       is_applied: appliedFilter,
       sort_by:    sortBy,
       sort_order: 'desc',
+      source:     source === 'all' ? undefined : source,
       page,
       page_size:  20,
     }),
@@ -39,9 +48,32 @@ export default function JobList() {
 
   const totalPages = data ? Math.ceil(data.total / 20) : 1;
 
+  function switchSource(key: string) {
+    setSource(key);
+    setPage(1);
+  }
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-800 mb-5">Job Listings</h1>
+      <h1 className="text-2xl font-bold text-gray-800 mb-4">Job Listings</h1>
+
+      {/* Source tabs */}
+      <div className="flex gap-1 mb-5 border-b">
+        {SOURCE_TABS.map(t => (
+          <button
+            key={t.key}
+            onClick={() => switchSource(t.key)}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition ${
+              source === t.key
+                ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-wrap gap-3 mb-5">
         <input
           type="text"
@@ -69,7 +101,9 @@ export default function JobList() {
           <span>{Math.round(minScore * 100)}%</span>
         </div>
       </div>
+
       <p className="text-sm text-gray-500 mb-3">{data?.total ?? 0} jobs found</p>
+
       {isLoading ? (
         <div className="text-center text-gray-400 py-12">Loading...</div>
       ) : (
@@ -79,7 +113,14 @@ export default function JobList() {
               className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition">
               <div className="flex justify-between items-start">
                 <div>
-                  <h3 className="font-semibold text-gray-800">{job.job_title}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-gray-800">{job.job_title}</h3>
+                    {job.source && (
+                      <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                        {job.source === 'iworkforsa' ? 'iWorkForSA' : 'Seek'}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-3 text-sm text-gray-500 mt-1">
                     <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
                     {job.location    && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
@@ -108,6 +149,7 @@ export default function JobList() {
           ))}
         </div>
       )}
+
       {totalPages > 1 && (
         <div className="flex justify-center items-center gap-3 mt-6">
           <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
