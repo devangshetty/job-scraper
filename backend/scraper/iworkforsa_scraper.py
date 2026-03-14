@@ -7,8 +7,9 @@ from scraper.parser import clean_text
 
 logger = logging.getLogger(__name__)
 
-BASE_URL     = "https://www.iworkfor.sa.gov.au"
-SEARCH_URL   = f"{BASE_URL}/job-search"
+BASE_URL   = "https://www.iworkfor.sa.gov.au"
+# navigate to the homepage and click through to job search
+HOME_URL   = f"{BASE_URL}"
 ICT_CATEGORY = "Information/Communication Technology"
 
 USER_AGENTS = [
@@ -19,30 +20,49 @@ USER_AGENTS = [
 ]
 
 
+async def _navigate_to_search(page) -> bool:
+    """Navigate to the homepage and get to the search form."""
+    # try known candidate URLs in order
+    candidates = [
+        f"{BASE_URL}/iworkforsa/job-search.php",
+        f"{BASE_URL}/iworkforsa/",
+        BASE_URL,
+    ]
+    for url in candidates:
+        logger.info(f"iworkforsa: trying URL {url}")
+        await page.goto(url, wait_until="networkidle", timeout=30000)
+        await asyncio.sleep(2.0)
+        html = await page.content()
+        logger.info(f"iworkforsa: {url} -> first 500 chars: {html[:500]}")
+        if "404" not in html[:200] and "Not Found" not in html[:200]:
+            logger.info(f"iworkforsa: landed on {url}")
+            return True
+    return False
+
+
 async def _get_frame(page):
     logger.info(f"iworkforsa: total frames = {len(page.frames)}")
     for i, f in enumerate(page.frames):
         logger.info(f"iworkforsa: frame[{i}] url={f.url}")
-
-    for frame in page.frames:
         try:
-            btn = await frame.query_selector("#brsSearchBtn")
+            btn = await f.query_selector("#brsSearchBtn")
             if btn:
-                logger.info(f"iworkforsa: found search form in frame: {frame.url}")
-                return frame
+                logger.info(f"iworkforsa: found search form in frame: {f.url}")
+                return f
         except Exception:
             continue
 
     await asyncio.sleep(5.0)
-    for frame in page.frames:
+    for i, f in enumerate(page.frames):
         try:
-            btn = await frame.query_selector("#brsSearchBtn")
+            btn = await f.query_selector("#brsSearchBtn")
             if btn:
-                return frame
+                logger.info(f"iworkforsa: found search form in frame after wait: {f.url}")
+                return f
         except Exception:
             continue
 
-    logger.warning("iworkforsa: could not find frame with #brsSearchBtn, falling back to main frame")
+    logger.warning("iworkforsa: falling back to main frame")
     return page.main_frame
 
 
@@ -170,13 +190,10 @@ async def scrape_iworkforsa() -> List[Dict]:
         page = await context.new_page()
 
         try:
-            logger.info("iworkforsa: loading search page")
-            await page.goto(SEARCH_URL, wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(3.0)
-
-            # dump a snippet of the page HTML to see what headless actually loaded
-            html = await page.content()
-            logger.info(f"iworkforsa: page HTML snippet (first 2000 chars):\n{html[:2000]}")
+            ok = await _navigate_to_search(page)
+            if not ok:
+                logger.error("iworkforsa: could not find a valid search page URL")
+                return all_jobs
 
             frame = await _get_frame(page)
 
