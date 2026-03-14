@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { fetchJobs } from '../api/client';
 import type { Job } from '../types';
@@ -11,6 +11,12 @@ const SOURCE_TABS = [
   { key: 'iworkforsa', label: 'iWorkForSA' },
 ];
 
+function parseSkills(raw: string | string[]): string[] {
+  if (Array.isArray(raw)) return raw;
+  try { return JSON.parse(raw) ?? []; }
+  catch { return []; }
+}
+
 function ScoreBadge({ score }: { score: number | null }) {
   if (score === null) return <span className="text-xs text-gray-400">Unscored</span>;
   const pct = Math.round(score * 100);
@@ -21,8 +27,7 @@ function ScoreBadge({ score }: { score: number | null }) {
 }
 
 export default function JobList() {
-  const navigate     = useNavigate();
-  const queryClient  = useQueryClient();
+  const navigate    = useNavigate();
   const [source,    setSource]    = useState('all');
   const [minScore,  setMinScore]  = useState(0);
   const [search,    setSearch]    = useState('');
@@ -108,45 +113,48 @@ export default function JobList() {
         <div className="text-center text-gray-400 py-12">Loading...</div>
       ) : (
         <div className="flex flex-col gap-3">
-          {(data?.jobs ?? []).map((job: Job) => (
-            <div key={job.id} onClick={() => navigate(`/jobs/${job.id}`)}
-              className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition">
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-gray-800">{job.job_title}</h3>
-                    {job.source && (
-                      <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
-                        {job.source === 'iworkforsa' ? 'iWorkForSA' : 'Seek'}
-                      </span>
+          {(data?.jobs ?? []).map((job: Job) => {
+            const skills = parseSkills(job.matched_skills);
+            return (
+              <div key={job.id} onClick={() => navigate(`/jobs/${job.id}`)}
+                className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-800">{job.job_title}</h3>
+                      {job.source && (
+                        <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                          {job.source === 'iworkforsa' ? 'iWorkForSA' : 'Seek'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-sm text-gray-500 mt-1">
+                      <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
+                      {job.location    && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
+                      {job.salary      && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
+                      {job.posted_date && <span className="flex items-center gap-1"><Calendar size={13} />{job.posted_date}</span>}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <ScoreBadge score={job.match_score} />
+                    {job.is_applied && (
+                      <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">Applied</span>
                     )}
                   </div>
-                  <div className="flex flex-wrap gap-3 text-sm text-gray-500 mt-1">
-                    <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
-                    {job.location    && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
-                    {job.salary      && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
-                    {job.posted_date && <span className="flex items-center gap-1"><Calendar size={13} />{job.posted_date}</span>}
+                </div>
+                {skills.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {skills.slice(0, 6).map(s => (
+                      <span key={s} className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">{s}</span>
+                    ))}
+                    {skills.length > 6 && (
+                      <span className="text-xs text-gray-400">+{skills.length - 6} more</span>
+                    )}
                   </div>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <ScoreBadge score={job.match_score} />
-                  {job.is_applied && (
-                    <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">Applied</span>
-                  )}
-                </div>
+                )}
               </div>
-              {job.matched_skills.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {job.matched_skills.slice(0, 6).map(s => (
-                    <span key={s} className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">{s}</span>
-                  ))}
-                  {job.matched_skills.length > 6 && (
-                    <span className="text-xs text-gray-400">+{job.matched_skills.length - 6} more</span>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
