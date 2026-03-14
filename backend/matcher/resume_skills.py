@@ -21,25 +21,44 @@ Adelaide South Australia.
 """
 
 SKILLS = [
+    # Languages
     "javascript", "typescript", "python", "java", "ruby", "php", "sql",
-    "react", "reactjs", "react.js", "angularjs", "angular", "nodejs", "node.js",
-    "html", "css",
-    "spring boot", "springboot", "fastapi", "flask", "django", "laravel",
-    "rest api", "rest apis", "restful", "graphql",
+
+    # Frontend
+    "react", "angular", "html", "css",
+
+    # Backend frameworks
+    "spring boot", "fastapi", "flask", "django", "laravel", "node.js",
+
+    # APIs
+    "rest api", "restful", "graphql",
+
+    # DevOps / infra
     "kubernetes", "docker", "jenkins", "ci/cd", "azure", "aws", "git",
     "maven", "gradle",
-    "oracle", "mysql", "postgresql", "postgres", "sqlite", "sql server",
+
+    # Databases
+    "oracle", "mysql", "postgresql", "sqlite", "sql server",
+
+    # Testing
     "postman", "phpunit", "junit", "automated testing", "unit testing",
-    "langchain", "openai", "llm", "machine learning", "ml", "lstm",
+
+    # AI / ML
+    "langchain", "openai", "llm", "machine learning", "lstm",
     "random forest", "scikit-learn", "n8n", "langgraph", "crewai",
+
+    # Monitoring / BI
     "splunk", "kibana", "mirth connect", "power bi",
-    "web application", "full stack", "fullstack", "integration", "etl",
-    "microservices", "agile", "scrum",
+
+    # General
+    "full stack", "integration", "microservices", "agile", "scrum",
 ]
 
 SYNONYMS = {
     "frontend engineer": "react",
     "front-end":         "react",
+    "reactjs":           "react",
+    "react.js":          "react",
     "back-end":          "java",
     "backend engineer":  "java",
     "next.js":           "react",
@@ -47,4 +66,12 @@ SYNONYMS = {
     "devops engineer":   "kubernetes",
     "cloud engineer":    "azure",
     "data engineer":     "sql",
+    "springboot":        "spring boot",
+    "spring-boot":       "spring boot",
+    "nodejs":            "node.js",
+    "postgres":          "postgresql",
+    "fullstack":         "full stack",
+    "ml":                "machine learning",
+    "rest apis":         "rest api",
+    "etl":               "integration",
 }
