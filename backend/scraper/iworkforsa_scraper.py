@@ -20,8 +20,11 @@ USER_AGENTS = [
 
 
 async def _get_frame(page):
-    """Return the iframe frame that contains the job search form."""
-    await asyncio.sleep(2.0)
+    # log all frames so we can debug
+    logger.info(f"iworkforsa: total frames = {len(page.frames)}")
+    for i, f in enumerate(page.frames):
+        logger.info(f"iworkforsa: frame[{i}] url={f.url}")
+
     for frame in page.frames:
         try:
             btn = await frame.query_selector("#brsSearchBtn")
@@ -30,6 +33,21 @@ async def _get_frame(page):
                 return frame
         except Exception:
             continue
+
+    # try waiting longer for the iframe to load
+    logger.info("iworkforsa: #brsSearchBtn not found yet, waiting 5s more...")
+    await asyncio.sleep(5.0)
+    logger.info(f"iworkforsa: frames after extra wait = {len(page.frames)}")
+    for i, f in enumerate(page.frames):
+        logger.info(f"iworkforsa: frame[{i}] url={f.url}")
+        try:
+            btn = await f.query_selector("#brsSearchBtn")
+            if btn:
+                logger.info(f"iworkforsa: found search form in frame after wait: {f.url}")
+                return f
+        except Exception:
+            continue
+
     logger.warning("iworkforsa: could not find frame with #brsSearchBtn, falling back to main frame")
     return page.main_frame
 
@@ -99,7 +117,6 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
         await page.goto(job_url, wait_until="domcontentloaded", timeout=20000)
         await asyncio.sleep(random.uniform(1.5, 3.0))
 
-        # job detail pages open directly (not in iframe)
         frame = page.main_frame
         for f in page.frames:
             try:
@@ -161,7 +178,7 @@ async def scrape_iworkforsa() -> List[Dict]:
         try:
             logger.info("iworkforsa: loading search page")
             await page.goto(SEARCH_URL, wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(3.0)
 
             frame = await _get_frame(page)
 
