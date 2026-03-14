@@ -9,7 +9,9 @@ Scrapes Seek.com.au for software engineering roles and scores them against a res
 
 ## Setup
 
-### Backend
+> **Two terminals are required.** The backend and frontend are separate processes that must both be running at the same time.
+
+### Terminal 1 - Backend
 
 > **macOS:** Use `python3` instead of `python`. After the venv activates, `python` and `pip` work without the suffix.
 
@@ -21,9 +23,9 @@ playwright install chromium
 uvicorn main:app --reload --port 8000
 ```
 
-API docs: http://localhost:8000/docs
+Leave this terminal running. API docs available at http://localhost:8000/docs
 
-### Frontend
+### Terminal 2 - Frontend
 
 ```bash
 cd frontend
@@ -31,7 +33,7 @@ npm install
 npm run dev
 ```
 
-App: http://localhost:3000
+Leave this terminal running. App available at http://localhost:3000
 
 ## Usage
 
