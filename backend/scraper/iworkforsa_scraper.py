@@ -20,7 +20,6 @@ USER_AGENTS = [
 
 
 async def _get_frame(page):
-    # log all frames so we can debug
     logger.info(f"iworkforsa: total frames = {len(page.frames)}")
     for i, f in enumerate(page.frames):
         logger.info(f"iworkforsa: frame[{i}] url={f.url}")
@@ -34,17 +33,12 @@ async def _get_frame(page):
         except Exception:
             continue
 
-    # try waiting longer for the iframe to load
-    logger.info("iworkforsa: #brsSearchBtn not found yet, waiting 5s more...")
     await asyncio.sleep(5.0)
-    logger.info(f"iworkforsa: frames after extra wait = {len(page.frames)}")
-    for i, f in enumerate(page.frames):
-        logger.info(f"iworkforsa: frame[{i}] url={f.url}")
+    for frame in page.frames:
         try:
-            btn = await f.query_selector("#brsSearchBtn")
+            btn = await frame.query_selector("#brsSearchBtn")
             if btn:
-                logger.info(f"iworkforsa: found search form in frame after wait: {f.url}")
-                return f
+                return frame
         except Exception:
             continue
 
@@ -179,6 +173,10 @@ async def scrape_iworkforsa() -> List[Dict]:
             logger.info("iworkforsa: loading search page")
             await page.goto(SEARCH_URL, wait_until="networkidle", timeout=30000)
             await asyncio.sleep(3.0)
+
+            # dump a snippet of the page HTML to see what headless actually loaded
+            html = await page.content()
+            logger.info(f"iworkforsa: page HTML snippet (first 2000 chars):\n{html[:2000]}")
 
             frame = await _get_frame(page)
 
