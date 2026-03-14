@@ -40,7 +40,7 @@ export const triggerScrape = async (req: ScrapeRequest): Promise<ScrapeResponse>
   return data;
 };
 
-export const fetchScrapeStatus = async (): Promise<{ running: boolean }> => {
+export const fetchScrapeStatus = async (): Promise<{ running: boolean; last_result?: Record<string, unknown> }> => {
   const { data } = await api.get('/scrape/status');
   return data;
 };

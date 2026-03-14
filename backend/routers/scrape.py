@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from database import get_db, SessionLocal
 from models import Job, ScrapeRequest, ScrapeResponse
 from scraper.seek_scraper import scrape_seek
+from scraper.iworkforsa_scraper import scrape_iworkforsa
 from matcher.tfidf_matcher import score_jobs_batch
 
 router = APIRouter(prefix="/api/scrape", tags=["scrape"])
@@ -19,11 +20,20 @@ async def _run_scrape_background(request: ScrapeRequest):
     _scrape_running = True
     db = SessionLocal()
     try:
-        raw_jobs = await scrape_seek(
+        seek_jobs = await scrape_seek(
             keywords=request.keywords,
             location=request.location,
             max_pages=request.max_pages,
         )
+
+        iworkforsa_jobs = []
+        if request.include_iworkforsa:
+            try:
+                iworkforsa_jobs = await scrape_iworkforsa()
+            except Exception as e:
+                logger.error(f"iworkforsa scrape failed: {e}", exc_info=True)
+
+        raw_jobs = seek_jobs + iworkforsa_jobs
 
         existing_urls = {r[0] for r in db.query(Job.application_url).all()}
         new_jobs      = [j for j in raw_jobs if j["application_url"] not in existing_urls]

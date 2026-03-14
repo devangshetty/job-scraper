@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchStats, triggerScrape, fetchScrapeStatus } from '../api/client';
 import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader } from 'lucide-react';
@@ -5,6 +6,8 @@ import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader } from 'lucide-r
 export default function Dashboard() {
   const qc = useQueryClient();
   const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: fetchStats });
+  const [includeGov, setIncludeGov] = useState(true);
+
   const { data: scrapeStatus } = useQuery({
     queryKey: ['scrapeStatus'],
     queryFn: fetchScrapeStatus,
@@ -14,17 +17,17 @@ export default function Dashboard() {
 
   const scrapeM = useMutation({
     mutationFn: () => triggerScrape({
-      keywords:  ['Software Engineer', 'Full Stack Developer', 'Java Developer', 'React Developer'],
-      location:  'Adelaide',
-      max_pages: 3,
+      keywords:           ['Software Engineer', 'Full Stack Developer', 'Java Developer', 'React Developer'],
+      location:           'Adelaide',
+      max_pages:          3,
+      include_iworkforsa: includeGov,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scrapeStatus'] });
     },
-    onError: () => {},
   });
 
-  const isRunning = scrapeStatus?.running ?? false;
+  const isRunning  = scrapeStatus?.running ?? false;
   const lastResult = scrapeStatus?.last_result as { scraped?: number; inserted?: number; error?: string } | undefined;
 
   const tiles = [
@@ -49,8 +52,18 @@ export default function Dashboard() {
       <div className="bg-white rounded-xl border p-5">
         <h2 className="font-semibold text-gray-700 mb-3">Run Scrape</h2>
         <p className="text-sm text-gray-500 mb-4">
-          Scrapes Seek for Software Engineer, Full Stack Developer, Java Developer, and React Developer roles in Adelaide. Takes 3-5 minutes.
+          Scrapes Seek for Software Engineer, Full Stack Developer, Java Developer, and React Developer roles in Adelaide.
+          Optionally includes iworkforSA ICT category jobs.
         </p>
+        <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={includeGov}
+            onChange={e => setIncludeGov(e.target.checked)}
+            className="w-4 h-4 accent-blue-600"
+          />
+          <span className="text-sm text-gray-600">Include iworkforSA (SA Government ICT jobs)</span>
+        </label>
         <button
           onClick={() => scrapeM.mutate()}
           disabled={isRunning}

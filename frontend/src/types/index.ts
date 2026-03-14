@@ -31,9 +31,10 @@ export interface Stats {
 }
 
 export interface ScrapeRequest {
-  keywords:  string[];
-  location:  string;
-  max_pages: number;
+  keywords:           string[];
+  location:           string;
+  max_pages:          number;
+  include_iworkforsa: boolean;
 }
 
 export interface ScrapeResponse {
