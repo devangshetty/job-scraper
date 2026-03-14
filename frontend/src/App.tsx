@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import Dashboard from './components/Dashboard';
 import JobList   from './components/JobList';
 import JobDetail from './components/JobDetail';
@@ -16,20 +16,35 @@ const navCls = ({ isActive }: { isActive: boolean }) =>
   }`;
 
 function ScrapeIndicator() {
-  const queryClient = useQueryClient();
   const { data } = useQuery({
     queryKey: ['scrapeStatus'],
-    queryFn: fetchScrapeStatus,
-    refetchInterval: (query) => query.state.data?.running ? 3000 : false,
+    queryFn:  fetchScrapeStatus,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return (d?.seek.running || d?.iworkforsa.running) ? 3000 : false;
+    },
     staleTime: 0,
   });
 
-  if (!data?.running) return null;
+  const seekRunning = data?.seek.running;
+  const govRunning  = data?.iworkforsa.running;
+
+  if (!seekRunning && !govRunning) return null;
 
   return (
-    <div className="mx-2 mt-4 flex items-center gap-2 bg-blue-50 text-blue-600 text-xs px-3 py-2 rounded-lg">
-      <Loader size={13} className="animate-spin shrink-0" />
-      <span>Scraping in progress...</span>
+    <div className="mx-2 mt-4 flex flex-col gap-1">
+      {seekRunning && (
+        <div className="flex items-center gap-2 bg-blue-50 text-blue-600 text-xs px-3 py-2 rounded-lg">
+          <Loader size={13} className="animate-spin shrink-0" />
+          <span>Seek scraping...</span>
+        </div>
+      )}
+      {govRunning && (
+        <div className="flex items-center gap-2 bg-orange-50 text-orange-600 text-xs px-3 py-2 rounded-lg">
+          <Loader size={13} className="animate-spin shrink-0" />
+          <span>iworkforSA scraping...</span>
+        </div>
+      )}
     </div>
   );
 }

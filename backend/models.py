@@ -63,11 +63,10 @@ class JobUpdate(BaseModel):
     notes:      Optional[str]  = None
 
 
-class ScrapeRequest(BaseModel):
-    keywords:           List[str] = ["Software Engineer", "Full Stack Developer", "Java Developer", "React Developer"]
-    location:           str       = "Adelaide"
-    max_pages:          int       = 3
-    include_iworkforsa: bool      = True
+class SeekScrapeRequest(BaseModel):
+    keywords:  List[str] = ["Software Engineer", "Full Stack Developer", "Java Developer", "React Developer"]
+    location:  str       = "Adelaide"
+    max_pages: int       = 3
 
 
 class ScrapeResponse(BaseModel):

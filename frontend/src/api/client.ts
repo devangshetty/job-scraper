@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Job, JobsResponse, Stats, ScrapeRequest, ScrapeResponse } from '../types';
+import type { Job, JobsResponse, Stats, ScrapeResponse, ScrapeStatus } from '../types';
 
 const api = axios.create({ baseURL: '/api' });
 
@@ -35,12 +35,21 @@ export const fetchStats = async (): Promise<Stats> => {
   return data;
 };
 
-export const triggerScrape = async (req: ScrapeRequest): Promise<ScrapeResponse> => {
-  const { data } = await api.post<ScrapeResponse>('/scrape', req);
+export const triggerSeekScrape = async (req: {
+  keywords:  string[];
+  location:  string;
+  max_pages: number;
+}): Promise<ScrapeResponse> => {
+  const { data } = await api.post<ScrapeResponse>('/scrape/seek', req);
   return data;
 };
 
-export const fetchScrapeStatus = async (): Promise<{ running: boolean; last_result?: Record<string, unknown> }> => {
-  const { data } = await api.get('/scrape/status');
+export const triggerIworkforsaScrape = async (): Promise<ScrapeResponse> => {
+  const { data } = await api.post<ScrapeResponse>('/scrape/iworkforsa');
+  return data;
+};
+
+export const fetchScrapeStatus = async (): Promise<ScrapeStatus> => {
+  const { data } = await api.get<ScrapeStatus>('/scrape/status');
   return data;
 };

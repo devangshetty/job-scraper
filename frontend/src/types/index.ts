@@ -30,11 +30,14 @@ export interface Stats {
   high_match:    number;
 }
 
-export interface ScrapeRequest {
-  keywords:           string[];
-  location:           string;
-  max_pages:          number;
-  include_iworkforsa: boolean;
+export interface ScrapeSourceStatus {
+  running:     boolean;
+  last_result: Record<string, unknown>;
+}
+
+export interface ScrapeStatus {
+  seek:       ScrapeSourceStatus;
+  iworkforsa: ScrapeSourceStatus;
 }
 
 export interface ScrapeResponse {

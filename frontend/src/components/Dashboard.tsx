@@ -1,34 +1,73 @@
-import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchStats, triggerScrape, fetchScrapeStatus } from '../api/client';
+import { fetchStats, triggerSeekScrape, triggerIworkforsaScrape, fetchScrapeStatus } from '../api/client';
 import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader } from 'lucide-react';
 
-export default function Dashboard() {
-  const qc = useQueryClient();
-  const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: fetchStats });
-  const [includeGov, setIncludeGov] = useState(true);
+function ScrapeCard({
+  title,
+  description,
+  isRunning,
+  lastResult,
+  onRun,
+}: {
+  title:       string;
+  description: string;
+  isRunning:   boolean;
+  lastResult:  Record<string, unknown>;
+  onRun:       () => void;
+}) {
+  return (
+    <div className="bg-white rounded-xl border p-5">
+      <h2 className="font-semibold text-gray-700 mb-1">{title}</h2>
+      <p className="text-sm text-gray-500 mb-4">{description}</p>
+      <button
+        onClick={onRun}
+        disabled={isRunning}
+        className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
+      >
+        {isRunning ? <Loader size={16} className="animate-spin" /> : <Play size={16} />}
+        {isRunning ? 'Scraping...' : 'Run Now'}
+      </button>
+      {isRunning && (
+        <p className="mt-3 text-sm text-blue-600 bg-blue-50 rounded p-2">Running in the background. You can navigate freely.</p>
+      )}
+      {!isRunning && lastResult && 'inserted' in lastResult && (
+        <p className="mt-3 text-sm text-gray-600 bg-gray-50 rounded p-2">
+          Last run: {lastResult.scraped as number} found, {lastResult.inserted as number} new jobs added.
+        </p>
+      )}
+      {!isRunning && lastResult && 'error' in lastResult && (
+        <p className="mt-3 text-sm text-red-600 bg-red-50 rounded p-2">Last run failed. Check backend logs.</p>
+      )}
+    </div>
+  );
+}
 
+export default function Dashboard() {
+  const qc                    = useQueryClient();
+  const { data: stats }       = useQuery({ queryKey: ['stats'], queryFn: fetchStats });
   const { data: scrapeStatus } = useQuery({
     queryKey: ['scrapeStatus'],
-    queryFn: fetchScrapeStatus,
-    refetchInterval: (query) => query.state.data?.running ? 3000 : false,
+    queryFn:  fetchScrapeStatus,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return (d?.seek.running || d?.iworkforsa.running) ? 3000 : false;
+    },
     staleTime: 0,
   });
 
-  const scrapeM = useMutation({
-    mutationFn: () => triggerScrape({
-      keywords:           ['Software Engineer', 'Full Stack Developer', 'Java Developer', 'React Developer'],
-      location:           'Adelaide',
-      max_pages:          3,
-      include_iworkforsa: includeGov,
+  const seekM = useMutation({
+    mutationFn: () => triggerSeekScrape({
+      keywords:  ['Software Engineer', 'Full Stack Developer', 'Java Developer', 'React Developer'],
+      location:  'Adelaide',
+      max_pages: 3,
     }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['scrapeStatus'] });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scrapeStatus'] }),
   });
 
-  const isRunning  = scrapeStatus?.running ?? false;
-  const lastResult = scrapeStatus?.last_result as { scraped?: number; inserted?: number; error?: string } | undefined;
+  const govM = useMutation({
+    mutationFn: triggerIworkforsaScrape,
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['scrapeStatus'] }),
+  });
 
   const tiles = [
     { label: 'Total Jobs',  value: stats?.total_jobs    ?? 0,  icon: Briefcase,   color: 'bg-blue-50 text-blue-600' },
@@ -49,40 +88,21 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
-      <div className="bg-white rounded-xl border p-5">
-        <h2 className="font-semibold text-gray-700 mb-3">Run Scrape</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Scrapes Seek for Software Engineer, Full Stack Developer, Java Developer, and React Developer roles in Adelaide.
-          Optionally includes iworkforSA ICT category jobs.
-        </p>
-        <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={includeGov}
-            onChange={e => setIncludeGov(e.target.checked)}
-            className="w-4 h-4 accent-blue-600"
-          />
-          <span className="text-sm text-gray-600">Include iworkforSA (SA Government ICT jobs)</span>
-        </label>
-        <button
-          onClick={() => scrapeM.mutate()}
-          disabled={isRunning}
-          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
-        >
-          {isRunning ? <Loader size={16} className="animate-spin" /> : <Play size={16} />}
-          {isRunning ? 'Scraping...' : 'Run Scrape Now'}
-        </button>
-        {isRunning && (
-          <p className="mt-3 text-sm text-blue-600 bg-blue-50 rounded p-2">Scrape running in the background. You can navigate freely.</p>
-        )}
-        {!isRunning && lastResult && 'inserted' in lastResult && (
-          <p className="mt-3 text-sm text-gray-600 bg-gray-50 rounded p-2">
-            Last scrape: {lastResult.scraped} found, {lastResult.inserted} new jobs added.
-          </p>
-        )}
-        {!isRunning && lastResult && 'error' in lastResult && (
-          <p className="mt-3 text-sm text-red-600 bg-red-50 rounded p-2">Last scrape failed. Check backend logs.</p>
-        )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <ScrapeCard
+          title="Seek"
+          description="Scrapes Software Engineer, Full Stack Developer, Java Developer, and React Developer roles in Adelaide. Takes 20-30 min."
+          isRunning={scrapeStatus?.seek.running ?? false}
+          lastResult={scrapeStatus?.seek.last_result ?? {}}
+          onRun={() => seekM.mutate()}
+        />
+        <ScrapeCard
+          title="iworkforSA"
+          description="Scrapes the Information/Communication Technology category from the SA Government jobs board. Takes 5-10 min."
+          isRunning={scrapeStatus?.iworkforsa.running ?? false}
+          lastResult={scrapeStatus?.iworkforsa.last_result ?? {}}
+          onRun={() => govM.mutate()}
+        />
       </div>
     </div>
   );

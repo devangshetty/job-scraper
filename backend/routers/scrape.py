@@ -1,9 +1,7 @@
-import asyncio
 import logging
-from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlalchemy.orm import Session
-from database import get_db, SessionLocal
-from models import Job, ScrapeRequest, ScrapeResponse
+from fastapi import APIRouter, BackgroundTasks
+from database import SessionLocal
+from models import Job, SeekScrapeRequest, ScrapeResponse
 from scraper.seek_scraper import scrape_seek
 from scraper.iworkforsa_scraper import scrape_iworkforsa
 from matcher.tfidf_matcher import score_jobs_batch
@@ -11,40 +9,21 @@ from matcher.tfidf_matcher import score_jobs_batch
 router = APIRouter(prefix="/api/scrape", tags=["scrape"])
 logger = logging.getLogger(__name__)
 
-_scrape_running = False
-_last_result: dict = {}
+_seek_running       = False
+_iworkforsa_running = False
+_seek_last:         dict = {}
+_iworkforsa_last:   dict = {}
 
 
-async def _run_scrape_background(request: ScrapeRequest):
-    global _scrape_running, _last_result
-    _scrape_running = True
+def _save_jobs(raw_jobs: list, source: str) -> tuple:
     db = SessionLocal()
     try:
-        seek_jobs = await scrape_seek(
-            keywords=request.keywords,
-            location=request.location,
-            max_pages=request.max_pages,
-        )
-
-        iworkforsa_jobs = []
-        if request.include_iworkforsa:
-            try:
-                iworkforsa_jobs = await scrape_iworkforsa()
-            except Exception as e:
-                logger.error(f"iworkforsa scrape failed: {e}", exc_info=True)
-
-        raw_jobs = seek_jobs + iworkforsa_jobs
-
         existing_urls = {r[0] for r in db.query(Job.application_url).all()}
         new_jobs      = [j for j in raw_jobs if j["application_url"] not in existing_urls]
-
         if not new_jobs:
-            _last_result = {"scraped": len(raw_jobs), "inserted": 0}
-            return
-
-        scored_jobs = score_jobs_batch(new_jobs)
-
-        db_objects = [
+            return len(raw_jobs), 0
+        scored = score_jobs_batch(new_jobs)
+        db.bulk_save_objects([
             Job(
                 job_title       = j["job_title"],
                 company         = j["company"],
@@ -57,31 +36,70 @@ async def _run_scrape_background(request: ScrapeRequest):
                 matched_skills  = j.get("matched_skills", "[]"),
                 missing_skills  = j.get("missing_skills", "[]"),
             )
-            for j in scored_jobs
-        ]
-
-        db.bulk_save_objects(db_objects)
+            for j in scored
+        ])
         db.commit()
-        _last_result = {"scraped": len(raw_jobs), "inserted": len(db_objects)}
-        logger.info(f"Scrape done: {len(raw_jobs)} scraped, {len(db_objects)} inserted")
-
+        return len(raw_jobs), len(scored)
     except Exception as e:
-        logger.error(f"Scrape failed: {e}", exc_info=True)
-        _last_result = {"scraped": 0, "inserted": 0, "error": str(e)}
+        logger.error(f"{source} save failed: {e}", exc_info=True)
+        raise
     finally:
         db.close()
-        _scrape_running = False
 
 
-@router.post("", response_model=ScrapeResponse)
-async def trigger_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks):
-    global _scrape_running
-    if _scrape_running:
-        return ScrapeResponse(scraped=0, scored=0, message="Scrape already in progress.")
-    background_tasks.add_task(_run_scrape_background, request)
-    return ScrapeResponse(scraped=0, scored=0, message="Scrape started. Check status at /api/scrape/status.")
+async def _run_seek(request: SeekScrapeRequest):
+    global _seek_running, _seek_last
+    _seek_running = True
+    try:
+        raw = await scrape_seek(
+            keywords=request.keywords,
+            location=request.location,
+            max_pages=request.max_pages,
+        )
+        scraped, inserted = _save_jobs(raw, "seek")
+        _seek_last = {"scraped": scraped, "inserted": inserted}
+        logger.info(f"Seek done: {scraped} scraped, {inserted} inserted")
+    except Exception as e:
+        _seek_last = {"error": str(e)}
+        logger.error(f"Seek scrape failed: {e}", exc_info=True)
+    finally:
+        _seek_running = False
+
+
+async def _run_iworkforsa():
+    global _iworkforsa_running, _iworkforsa_last
+    _iworkforsa_running = True
+    try:
+        raw = await scrape_iworkforsa()
+        scraped, inserted = _save_jobs(raw, "iworkforsa")
+        _iworkforsa_last = {"scraped": scraped, "inserted": inserted}
+        logger.info(f"iworkforsa done: {scraped} scraped, {inserted} inserted")
+    except Exception as e:
+        _iworkforsa_last = {"error": str(e)}
+        logger.error(f"iworkforsa scrape failed: {e}", exc_info=True)
+    finally:
+        _iworkforsa_running = False
+
+
+@router.post("/seek", response_model=ScrapeResponse)
+async def trigger_seek(request: SeekScrapeRequest, background_tasks: BackgroundTasks):
+    if _seek_running:
+        return ScrapeResponse(scraped=0, scored=0, message="Seek scrape already in progress.")
+    background_tasks.add_task(_run_seek, request)
+    return ScrapeResponse(scraped=0, scored=0, message="Seek scrape started.")
+
+
+@router.post("/iworkforsa", response_model=ScrapeResponse)
+async def trigger_iworkforsa(background_tasks: BackgroundTasks):
+    if _iworkforsa_running:
+        return ScrapeResponse(scraped=0, scored=0, message="iworkforSA scrape already in progress.")
+    background_tasks.add_task(_run_iworkforsa)
+    return ScrapeResponse(scraped=0, scored=0, message="iworkforSA scrape started.")
 
 
 @router.get("/status")
 def scrape_status():
-    return {"running": _scrape_running, "last_result": _last_result}
+    return {
+        "seek":       {"running": _seek_running,       "last_result": _seek_last},
+        "iworkforsa": {"running": _iworkforsa_running, "last_result": _iworkforsa_last},
+    }
