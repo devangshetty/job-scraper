@@ -4,6 +4,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchJob, updateJob } from '../api/client';
 import { ArrowLeft, ExternalLink, CheckCircle, Circle } from 'lucide-react';
 
+function parseSkills(raw: string | string[]): string[] {
+  if (Array.isArray(raw)) return raw;
+  try { return JSON.parse(raw) ?? []; }
+  catch { return []; }
+}
+
 export default function JobDetail() {
   const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -31,9 +37,14 @@ export default function JobDetail() {
   if (isLoading) return <div className="p-8 text-gray-400 text-center">Loading...</div>;
   if (!job)      return <div className="p-8 text-red-500">Job not found.</div>;
 
+  const matchedSkills = parseSkills(job.matched_skills);
+  const missingSkills = parseSkills(job.missing_skills);
+
   const scoreColor = !job.match_score ? 'text-gray-400' :
                      job.match_score >= 0.7 ? 'text-green-600' :
                      job.match_score >= 0.5 ? 'text-yellow-600' : 'text-red-600';
+
+  const applyLabel = job.source === 'iworkforsa' ? 'Apply on iWorkForSA' : 'Apply on Seek';
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -44,14 +55,21 @@ export default function JobDetail() {
       <div className="bg-white rounded-xl border p-6">
         <div className="flex justify-between items-start mb-4">
           <div>
-            <h1 className="text-xl font-bold text-gray-800">{job.job_title}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-gray-800">{job.job_title}</h1>
+              {job.source && (
+                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                  {job.source === 'iworkforsa' ? 'iWorkForSA' : 'Seek'}
+                </span>
+              )}
+            </div>
             <p className="text-gray-500">{job.company} &middot; {job.location}</p>
             {job.salary      && <p className="text-sm text-gray-500 mt-0.5">{job.salary}</p>}
             {job.posted_date && <p className="text-xs text-gray-400 mt-0.5">Posted: {job.posted_date}</p>}
           </div>
           {job.match_score !== null && (
             <div className="text-right">
-              <p className={`text-3xl font-bold ${scoreColor}`}>{Math.round(job.match_score * 100)}%</p>
+              <p className={`text-3xl font-bold ${scoreColor}`}>{Math.round((job.match_score ?? 0) * 100)}%</p>
               <p className="text-xs text-gray-400">match score</p>
             </div>
           )}
@@ -60,16 +78,18 @@ export default function JobDetail() {
           <div>
             <p className="text-xs font-semibold text-green-700 mb-1">Matched Skills</p>
             <div className="flex flex-wrap gap-1">
-              {job.matched_skills.map(s => (
-                <span key={s} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded">{s}</span>
-              ))}
-              {job.matched_skills.length === 0 && <span className="text-xs text-gray-400">None detected</span>}
+              {matchedSkills.length > 0
+                ? matchedSkills.map(s => (
+                    <span key={s} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded">{s}</span>
+                  ))
+                : <span className="text-xs text-gray-400">None detected</span>
+              }
             </div>
           </div>
           <div>
             <p className="text-xs font-semibold text-red-600 mb-1">Missing Skills</p>
             <div className="flex flex-wrap gap-1">
-              {job.missing_skills.slice(0, 10).map(s => (
+              {missingSkills.slice(0, 10).map(s => (
                 <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded">{s}</span>
               ))}
             </div>
@@ -77,7 +97,7 @@ export default function JobDetail() {
         </div>
         <div className="mb-5">
           <p className="text-xs font-semibold text-gray-500 mb-1">Job Description</p>
-          <div className="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 rounded p-3 max-h-64 overflow-y-auto">
+          <div className="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 rounded p-3 max-h-80 overflow-y-auto leading-relaxed">
             {job.description || 'No description available.'}
           </div>
         </div>
@@ -103,7 +123,7 @@ export default function JobDetail() {
           </button>
           <a href={job.application_url} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
-            <ExternalLink size={15} /> Apply on Seek
+            <ExternalLink size={15} /> {applyLabel}
           </a>
         </div>
       </div>

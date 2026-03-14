@@ -62,7 +62,6 @@ export default function JobList() {
     <div className="p-6 max-w-5xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-800 mb-4">Job Listings</h1>
 
-      {/* Source tabs */}
       <div className="flex gap-1 mb-5 border-b">
         {SOURCE_TABS.map(t => (
           <button
@@ -119,11 +118,11 @@ export default function JobList() {
               <div key={job.id} onClick={() => navigate(`/jobs/${job.id}`)}
                 className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition">
                 <div className="flex justify-between items-start">
-                  <div>
+                  <div className="flex-1 min-w-0 pr-3">
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold text-gray-800">{job.job_title}</h3>
                       {job.source && (
-                        <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                        <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full shrink-0">
                           {job.source === 'iworkforsa' ? 'iWorkForSA' : 'Seek'}
                         </span>
                       )}
@@ -134,8 +133,14 @@ export default function JobList() {
                       {job.salary      && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
                       {job.posted_date && <span className="flex items-center gap-1"><Calendar size={13} />{job.posted_date}</span>}
                     </div>
+                    {/* Show short description snippet only, no full dump */}
+                    {job.description && (
+                      <p className="text-xs text-gray-400 mt-1 line-clamp-2">
+                        {job.description.slice(0, 180)}{job.description.length > 180 ? '...' : ''}
+                      </p>
+                    )}
                   </div>
-                  <div className="flex flex-col items-end gap-1">
+                  <div className="flex flex-col items-end gap-1 shrink-0">
                     <ScoreBadge score={job.match_score} />
                     {job.is_applied && (
                       <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">Applied</span>
