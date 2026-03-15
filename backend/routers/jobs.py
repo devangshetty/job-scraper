@@ -1,4 +1,5 @@
 import logging
+import re
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
@@ -67,6 +68,54 @@ def get_stats(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/debug/{job_id}")
+def debug_job(job_id: int, db: Session = Depends(get_db)):
+    """Debug endpoint - shows raw description info for a job."""
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        return {"error": "not found"}
+    desc = job.description or ""
+    return {
+        "id":              job.id,
+        "title":           job.job_title,
+        "source":          job.source,
+        "desc_length":     len(desc),
+        "desc_first_500":  desc[:500],
+        "desc_last_200":   desc[-200:],
+        "looks_like_html": "<" in desc and ">" in desc,
+        "newline_count":   desc.count("\n"),
+        "space_run_count": len(re.findall(r" {5,}", desc)),
+    }
+
+
+@router.post("/fix-descriptions")
+def fix_descriptions(db: Session = Depends(get_db)):
+    """
+    Bulk-clean existing iworkforsa job descriptions in the DB.
+    Collapses excessive whitespace and trims the text.
+    Call this once via: curl -X POST http://localhost:8000/api/jobs/fix-descriptions
+    """
+    jobs = db.query(Job).filter(Job.source == "iworkforsa").all()
+    fixed = 0
+    for job in jobs:
+        if not job.description:
+            continue
+        original_len = len(job.description)
+        cleaned = job.description
+        # Strip any residual HTML tags
+        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+        # Collapse runs of whitespace/newlines
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        cleaned = cleaned.strip()
+        if len(cleaned) != original_len:
+            job.description = cleaned
+            fixed += 1
+    db.commit()
+    logger.info(f"fix-descriptions: cleaned {fixed} iworkforsa jobs")
+    return {"fixed": fixed, "total_iworkforsa": len(jobs)}
+
+
 @router.get("/{job_id}")
 def get_job(job_id: int, db: Session = Depends(get_db)):
     return db.query(Job).filter(Job.id == job_id).first()
@@ -79,6 +128,17 @@ def mark_applied(job_id: int, db: Session = Depends(get_db)):
         job.is_applied = True
         db.commit()
     return {"ok": True}
+
+
+@router.patch("/{job_id}")
+def update_job(job_id: int, update: dict, db: Session = Depends(get_db)):
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if job:
+        for key, value in update.items():
+            if hasattr(job, key):
+                setattr(job, key, value)
+        db.commit()
+    return job
 
 
 @router.delete("/purge/non-ict")
