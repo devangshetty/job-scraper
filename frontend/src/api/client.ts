@@ -50,6 +50,15 @@ export const triggerIworkforsaScrape = async (): Promise<ScrapeResponse> => {
   return data;
 };
 
+export const triggerIndeedScrape = async (req: {
+  keywords:  string[];
+  location:  string;
+  max_pages: number;
+}): Promise<ScrapeResponse> => {
+  const { data } = await api.post<ScrapeResponse>('/scrape/indeed', req);
+  return data;
+};
+
 export const fetchScrapeStatus = async (): Promise<ScrapeStatus> => {
   const { data } = await api.get<ScrapeStatus>('/scrape/status');
   return data;

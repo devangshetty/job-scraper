@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchStats, triggerSeekScrape, triggerIworkforsaScrape, fetchScrapeStatus } from '../api/client';
+import { fetchStats, triggerSeekScrape, triggerIworkforsaScrape, triggerIndeedScrape, fetchScrapeStatus } from '../api/client';
 import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader } from 'lucide-react';
 
 function ScrapeCard({
@@ -43,14 +43,14 @@ function ScrapeCard({
 }
 
 export default function Dashboard() {
-  const qc                    = useQueryClient();
-  const { data: stats }       = useQuery({ queryKey: ['stats'], queryFn: fetchStats });
+  const qc                     = useQueryClient();
+  const { data: stats }        = useQuery({ queryKey: ['stats'], queryFn: fetchStats });
   const { data: scrapeStatus } = useQuery({
     queryKey: ['scrapeStatus'],
     queryFn:  fetchScrapeStatus,
     refetchInterval: (query) => {
       const d = query.state.data;
-      return (d?.seek.running || d?.iworkforsa.running) ? 3000 : false;
+      return (d?.seek.running || d?.iworkforsa.running || d?.indeed?.running) ? 3000 : false;
     },
     staleTime: 0,
   });
@@ -67,6 +67,15 @@ export default function Dashboard() {
   const govM = useMutation({
     mutationFn: triggerIworkforsaScrape,
     onSuccess:  () => qc.invalidateQueries({ queryKey: ['scrapeStatus'] }),
+  });
+
+  const indeedM = useMutation({
+    mutationFn: () => triggerIndeedScrape({
+      keywords:  ['Software Engineer', 'Full Stack Developer', 'Java Developer', 'React Developer'],
+      location:  'Adelaide SA',
+      max_pages: 3,
+    }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scrapeStatus'] }),
   });
 
   const tiles = [
@@ -88,20 +97,27 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <ScrapeCard
           title="Seek"
-          description="Scrapes Software Engineer, Full Stack Developer, Java Developer, and React Developer roles in Adelaide. Takes 20-30 min."
+          description="Scrapes Software Engineer, Full Stack, Java and React roles in Adelaide. Takes 20-30 min."
           isRunning={scrapeStatus?.seek.running ?? false}
           lastResult={scrapeStatus?.seek.last_result ?? {}}
           onRun={() => seekM.mutate()}
         />
         <ScrapeCard
-          title="iworkforSA"
-          description="Scrapes the Information/Communication Technology category from the SA Government jobs board. Takes 5-10 min."
+          title="iWorkForSA"
+          description="Scrapes the ICT category from the SA Government jobs board. Takes 5-10 min."
           isRunning={scrapeStatus?.iworkforsa.running ?? false}
           lastResult={scrapeStatus?.iworkforsa.last_result ?? {}}
           onRun={() => govM.mutate()}
+        />
+        <ScrapeCard
+          title="Indeed"
+          description="Scrapes Software Engineer, Full Stack, Java and React roles in Adelaide SA. Takes 20-30 min."
+          isRunning={scrapeStatus?.indeed?.running ?? false}
+          lastResult={scrapeStatus?.indeed?.last_result ?? {}}
+          onRun={() => indeedM.mutate()}
         />
       </div>
     </div>
