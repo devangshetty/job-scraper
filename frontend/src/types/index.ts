@@ -39,6 +39,7 @@ export interface ScrapeSourceStatus {
 export interface ScrapeStatus {
   seek:       ScrapeSourceStatus;
   iworkforsa: ScrapeSourceStatus;
+  indeed:     ScrapeSourceStatus;
 }
 
 export interface ScrapeResponse {

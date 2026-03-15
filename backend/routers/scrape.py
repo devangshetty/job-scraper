@@ -5,19 +5,29 @@ from database import SessionLocal, engine
 from models import Job, SeekScrapeRequest, ScrapeResponse
 from scraper.seek_scraper import scrape_seek
 from scraper.iworkforsa_scraper import scrape_iworkforsa
+from scraper.indeed_scraper import scrape_indeed
 from matcher.tfidf_matcher import score_jobs_batch
+from pydantic import BaseModel
+from typing import List
 
 router = APIRouter(prefix="/api/scrape", tags=["scrape"])
 logger = logging.getLogger(__name__)
 
 _seek_running       = False
 _iworkforsa_running = False
+_indeed_running     = False
 _seek_last:         dict = {}
 _iworkforsa_last:   dict = {}
+_indeed_last:       dict = {}
+
+
+class IndeedScrapeRequest(BaseModel):
+    keywords:  List[str] = ["Software Engineer", "Full Stack Developer", "Java Developer", "React Developer"]
+    location:  str       = "Adelaide SA"
+    max_pages: int       = 3
 
 
 def _normalise(s: str) -> str:
-    """Lowercase + strip for fuzzy dedup comparison."""
     return (s or "").lower().strip()
 
 
@@ -25,13 +35,12 @@ def _save_jobs(raw_jobs: list, source: str) -> tuple:
     db = SessionLocal()
     try:
         existing_urls = {r[0] for r in db.query(Job.application_url).all()}
-        # Build a set of (normalised_title, normalised_company) already in DB
         existing_title_company = {
             (_normalise(r[0]), _normalise(r[1]))
             for r in db.query(Job.job_title, Job.company).all()
         }
 
-        seen_in_batch = set()  # dedup within the current scrape batch too
+        seen_in_batch = set()
         new_jobs = []
         for j in raw_jobs:
             url = j.get("application_url", "")
@@ -41,12 +50,10 @@ def _save_jobs(raw_jobs: list, source: str) -> tuple:
                 continue
             if url in existing_urls:
                 continue
-
             key = (_normalise(j.get("job_title", "")), _normalise(j.get("company", "")))
             if key in existing_title_company or key in seen_in_batch:
                 logger.info(f"Skipping duplicate: {j.get('job_title')} @ {j.get('company')}")
                 continue
-
             seen_in_batch.add(key)
             new_jobs.append(j)
 
@@ -127,6 +134,25 @@ async def _run_iworkforsa():
         _iworkforsa_running = False
 
 
+async def _run_indeed(request: IndeedScrapeRequest):
+    global _indeed_running, _indeed_last
+    _indeed_running = True
+    try:
+        raw = await scrape_indeed(
+            keywords=request.keywords,
+            location=request.location,
+            max_pages=request.max_pages,
+        )
+        scraped, inserted = _save_jobs(raw, "indeed")
+        _indeed_last = {"scraped": scraped, "inserted": inserted}
+        logger.info(f"Indeed done: {scraped} scraped, {inserted} inserted")
+    except Exception as e:
+        _indeed_last = {"error": str(e)}
+        logger.error(f"Indeed scrape failed: {e}", exc_info=True)
+    finally:
+        _indeed_running = False
+
+
 @router.post("/seek", response_model=ScrapeResponse)
 async def trigger_seek(request: SeekScrapeRequest, background_tasks: BackgroundTasks):
     if _seek_running:
@@ -143,9 +169,18 @@ async def trigger_iworkforsa(background_tasks: BackgroundTasks):
     return ScrapeResponse(scraped=0, scored=0, message="iworkforSA scrape started.")
 
 
+@router.post("/indeed", response_model=ScrapeResponse)
+async def trigger_indeed(request: IndeedScrapeRequest, background_tasks: BackgroundTasks):
+    if _indeed_running:
+        return ScrapeResponse(scraped=0, scored=0, message="Indeed scrape already in progress.")
+    background_tasks.add_task(_run_indeed, request)
+    return ScrapeResponse(scraped=0, scored=0, message="Indeed scrape started.")
+
+
 @router.get("/status")
 def scrape_status():
     return {
         "seek":       {"running": _seek_running,       "last_result": _seek_last},
         "iworkforsa": {"running": _iworkforsa_running, "last_result": _iworkforsa_last},
+        "indeed":     {"running": _indeed_running,     "last_result": _indeed_last},
     }

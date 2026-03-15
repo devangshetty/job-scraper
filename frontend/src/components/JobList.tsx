@@ -8,6 +8,7 @@ import { MapPin, Building2, DollarSign, Calendar, ChevronLeft, ChevronRight } fr
 const SOURCE_TABS = [
   { key: 'all',        label: 'All Jobs' },
   { key: 'seek',       label: 'Seek' },
+  { key: 'indeed',     label: 'Indeed' },
   { key: 'iworkforsa', label: 'iWorkForSA' },
 ];
 
@@ -114,6 +115,10 @@ export default function JobList() {
         <div className="flex flex-col gap-3">
           {(data?.jobs ?? []).map((job: Job) => {
             const skills = parseSkills(job.matched_skills);
+            const sourceLabel =
+              job.source === 'iworkforsa' ? 'iWorkForSA' :
+              job.source === 'indeed'     ? 'Indeed' :
+              job.source === 'seek'       ? 'Seek' : job.source ?? '';
             return (
               <div key={job.id} onClick={() => navigate(`/jobs/${job.id}`)}
                 className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition">
@@ -123,7 +128,7 @@ export default function JobList() {
                       <h3 className="font-semibold text-gray-800">{job.job_title}</h3>
                       {job.source && (
                         <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full shrink-0">
-                          {job.source === 'iworkforsa' ? 'iWorkForSA' : 'Seek'}
+                          {sourceLabel}
                         </span>
                       )}
                     </div>

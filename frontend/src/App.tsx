@@ -21,15 +21,16 @@ function ScrapeIndicator() {
     queryFn:  fetchScrapeStatus,
     refetchInterval: (query) => {
       const d = query.state.data;
-      return (d?.seek.running || d?.iworkforsa.running) ? 3000 : false;
+      return (d?.seek.running || d?.iworkforsa.running || d?.indeed?.running) ? 3000 : false;
     },
     staleTime: 0,
   });
 
-  const seekRunning = data?.seek.running;
-  const govRunning  = data?.iworkforsa.running;
+  const seekRunning   = data?.seek.running;
+  const govRunning    = data?.iworkforsa.running;
+  const indeedRunning = data?.indeed?.running;
 
-  if (!seekRunning && !govRunning) return null;
+  if (!seekRunning && !govRunning && !indeedRunning) return null;
 
   return (
     <div className="mx-2 mt-4 flex flex-col gap-1">
@@ -42,7 +43,13 @@ function ScrapeIndicator() {
       {govRunning && (
         <div className="flex items-center gap-2 bg-orange-50 text-orange-600 text-xs px-3 py-2 rounded-lg">
           <Loader size={13} className="animate-spin shrink-0" />
-          <span>iworkforSA scraping...</span>
+          <span>iWorkForSA scraping...</span>
+        </div>
+      )}
+      {indeedRunning && (
+        <div className="flex items-center gap-2 bg-purple-50 text-purple-600 text-xs px-3 py-2 rounded-lg">
+          <Loader size={13} className="animate-spin shrink-0" />
+          <span>Indeed scraping...</span>
         </div>
       )}
     </div>
