@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchStats,
+  fetchJobCountBySource,
   triggerSeekScrape,
   triggerIworkforsaScrape,
   triggerIndeedScrape,
@@ -31,6 +32,12 @@ function ScrapeCard({
 }) {
   const [confirmClear, setConfirmClear] = useState(false);
 
+  const { data: jobCount } = useQuery({
+    queryKey: ['jobCount', source],
+    queryFn:  () => fetchJobCountBySource(source),
+    staleTime: 30_000,
+  });
+
   function handleClearClick() {
     if (!confirmClear) {
       setConfirmClear(true);
@@ -43,7 +50,14 @@ function ScrapeCard({
 
   return (
     <div className="bg-white rounded-xl border p-5">
-      <h2 className="font-semibold text-gray-700 mb-1">{title}</h2>
+      <div className="flex items-start justify-between mb-1">
+        <h2 className="font-semibold text-gray-700">{title}</h2>
+        {jobCount !== undefined && (
+          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+            {jobCount} job{jobCount !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
       <p className="text-sm text-gray-500 mb-4">{description}</p>
       <div className="flex gap-2">
         <button
@@ -56,15 +70,19 @@ function ScrapeCard({
         </button>
         <button
           onClick={handleClearClick}
-          disabled={isRunning || clearing}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition disabled:opacity-50 ${
+          disabled={isRunning || clearing || jobCount === 0}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition disabled:opacity-40 ${
             confirmClear
               ? 'bg-red-600 text-white hover:bg-red-700'
               : 'border border-red-300 text-red-500 hover:bg-red-50'
           }`}
         >
           {clearing ? <Loader size={15} className="animate-spin" /> : <Trash2 size={15} />}
-          {clearing ? 'Clearing...' : confirmClear ? 'Confirm?' : 'Clear Jobs'}
+          {clearing
+            ? 'Clearing...'
+            : confirmClear
+            ? `Delete ${jobCount} job${jobCount !== 1 ? 's' : ''}?`
+            : 'Clear Jobs'}
         </button>
       </div>
       {isRunning && (
@@ -118,18 +136,20 @@ export default function Dashboard() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scrapeStatus'] }),
   });
 
-  const clearSeekM   = useMutation({
-    mutationFn: () => deleteJobsBySource('seek'),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ['stats'] }); qc.invalidateQueries({ queryKey: ['jobs'] }); },
-  });
-  const clearGovM    = useMutation({
-    mutationFn: () => deleteJobsBySource('iworkforsa'),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ['stats'] }); qc.invalidateQueries({ queryKey: ['jobs'] }); },
-  });
-  const clearIndeedM = useMutation({
-    mutationFn: () => deleteJobsBySource('indeed'),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ['stats'] }); qc.invalidateQueries({ queryKey: ['jobs'] }); },
-  });
+  function makeClearMutation(source: string) {
+    return useMutation({
+      mutationFn: () => deleteJobsBySource(source),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ['stats'] });
+        qc.invalidateQueries({ queryKey: ['jobs'] });
+        qc.invalidateQueries({ queryKey: ['jobCount', source] });
+      },
+    });
+  }
+
+  const clearSeekM   = makeClearMutation('seek');
+  const clearGovM    = makeClearMutation('iworkforsa');
+  const clearIndeedM = makeClearMutation('indeed');
 
   const tiles = [
     { label: 'Total Jobs',  value: stats?.total_jobs    ?? 0,  icon: Briefcase,   color: 'bg-blue-50 text-blue-600' },

@@ -18,6 +18,11 @@ export const fetchJobs = async (params: {
   return data;
 };
 
+export const fetchJobCountBySource = async (source: string): Promise<number> => {
+  const { data } = await api.get<JobsResponse>('/jobs', { params: { source, page: 1, page_size: 1 } });
+  return data.total;
+};
+
 export const fetchJob = async (id: number): Promise<Job> => {
   const { data } = await api.get<Job>(`/jobs/${id}`);
   return data;
