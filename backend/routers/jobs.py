@@ -10,6 +10,8 @@ from typing import Optional
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 logger = logging.getLogger(__name__)
 
+ALLOWED_SOURCES = {"seek", "iworkforsa", "indeed"}
+
 
 def get_db():
     db = SessionLocal()
@@ -68,6 +70,20 @@ def get_stats(db: Session = Depends(get_db)):
     }
 
 
+@router.delete("/source/{source}")
+def delete_by_source(source: str, db: Session = Depends(get_db)):
+    if source not in ALLOWED_SOURCES:
+        return {"error": f"Unknown source '{source}'. Allowed: {sorted(ALLOWED_SOURCES)}"}
+    result = db.execute(
+        text("DELETE FROM jobs WHERE source = :source"),
+        {"source": source}
+    )
+    db.commit()
+    deleted = result.rowcount
+    logger.info(f"Deleted {deleted} jobs from source '{source}'")
+    return {"deleted": deleted, "source": source}
+
+
 @router.get("/debug/{job_id}")
 def debug_job(job_id: int, db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == job_id).first()
@@ -113,23 +129,11 @@ def fix_descriptions(db: Session = Depends(get_db)):
 
 @router.delete("/purge/duplicates")
 def purge_duplicates(db: Session = Depends(get_db)):
-    """
-    Delete duplicate jobs keeping only the one with the highest match_score
-    (or lowest id as tiebreak) for each title+company combination.
-    """
     result = db.execute(text("""
         DELETE FROM jobs
         WHERE id NOT IN (
-            SELECT MIN(id)
-            FROM (
-                SELECT id,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY LOWER(TRIM(job_title)), LOWER(TRIM(company))
-                           ORDER BY match_score DESC, id ASC
-                       ) as rn
-                FROM jobs
-            ) ranked
-            WHERE rn = 1
+            SELECT MIN(id) FROM jobs
+            GROUP BY LOWER(TRIM(job_title)), LOWER(TRIM(company))
         )
     """))
     db.commit()
