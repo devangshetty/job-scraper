@@ -89,25 +89,14 @@ def debug_job(job_id: int, db: Session = Depends(get_db)):
 
 @router.post("/fix-descriptions")
 def fix_descriptions(db: Session = Depends(get_db)):
-    """
-    Bulk-fix existing iworkforsa jobs:
-    - Clears location if it's longer than 100 chars (it's been contaminated with full page text)
-    - Extracts a clean postcode/suburb from description if possible
-    - Collapses whitespace in description
-    """
     jobs = db.query(Job).filter(Job.source == "iworkforsa").all()
     fixed = 0
     for job in jobs:
         changed = False
-
-        # Fix bad location - if it's longer than 100 chars it's definitely page content, not a suburb
         if job.location and len(job.location) > 100:
-            # Try to extract postcode + suburb from description e.g. "5000 - ADELAIDE"
-            match = re.search(r"(\d{4}\s*[-–]\s*[A-Z ]+)", job.description or "", re.IGNORECASE)
+            match = re.search(r"(\d{4}\s*[-\u2013]\s*[A-Z][A-Z ]+)", job.description or "", re.IGNORECASE)
             job.location = match.group(1).strip() if match else "Adelaide SA"
             changed = True
-
-        # Clean description - strip HTML tags and collapse whitespace
         if job.description:
             cleaned = re.sub(r"<[^>]+>", " ", job.description)
             cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
@@ -116,13 +105,37 @@ def fix_descriptions(db: Session = Depends(get_db)):
             if cleaned != job.description:
                 job.description = cleaned
                 changed = True
-
         if changed:
             fixed += 1
-
     db.commit()
-    logger.info(f"fix-descriptions: fixed {fixed} iworkforsa jobs")
     return {"fixed": fixed, "total_iworkforsa": len(jobs)}
+
+
+@router.delete("/purge/duplicates")
+def purge_duplicates(db: Session = Depends(get_db)):
+    """
+    Delete duplicate jobs keeping only the one with the highest match_score
+    (or lowest id as tiebreak) for each title+company combination.
+    """
+    result = db.execute(text("""
+        DELETE FROM jobs
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY LOWER(TRIM(job_title)), LOWER(TRIM(company))
+                           ORDER BY match_score DESC, id ASC
+                       ) as rn
+                FROM jobs
+            ) ranked
+            WHERE rn = 1
+        )
+    """))
+    db.commit()
+    deleted = result.rowcount
+    logger.info(f"purge-duplicates: removed {deleted} duplicate jobs")
+    return {"deleted": deleted}
 
 
 @router.get("/{job_id}")

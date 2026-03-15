@@ -16,21 +16,43 @@ _seek_last:         dict = {}
 _iworkforsa_last:   dict = {}
 
 
+def _normalise(s: str) -> str:
+    """Lowercase + strip for fuzzy dedup comparison."""
+    return (s or "").lower().strip()
+
+
 def _save_jobs(raw_jobs: list, source: str) -> tuple:
     db = SessionLocal()
     try:
         existing_urls = {r[0] for r in db.query(Job.application_url).all()}
-        new_jobs = [
-            j for j in raw_jobs
-            if j.get("application_url")
-            and not j["application_url"].lower().startswith("javascript")
-            and j["application_url"] not in existing_urls
-            and j.get("job_title", "").lower() not in {"job title", ""}
-        ]
+        # Build a set of (normalised_title, normalised_company) already in DB
+        existing_title_company = {
+            (_normalise(r[0]), _normalise(r[1]))
+            for r in db.query(Job.job_title, Job.company).all()
+        }
+
+        seen_in_batch = set()  # dedup within the current scrape batch too
+        new_jobs = []
+        for j in raw_jobs:
+            url = j.get("application_url", "")
+            if not url or url.lower().startswith("javascript"):
+                continue
+            if j.get("job_title", "").lower() in {"job title", ""}:
+                continue
+            if url in existing_urls:
+                continue
+
+            key = (_normalise(j.get("job_title", "")), _normalise(j.get("company", "")))
+            if key in existing_title_company or key in seen_in_batch:
+                logger.info(f"Skipping duplicate: {j.get('job_title')} @ {j.get('company')}")
+                continue
+
+            seen_in_batch.add(key)
+            new_jobs.append(j)
+
         if not new_jobs:
             return len(raw_jobs), 0
 
-        # enforce source tag - scraper should set it but this is the safety net
         for j in new_jobs:
             j.setdefault("source", source)
 
