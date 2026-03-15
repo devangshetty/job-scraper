@@ -133,12 +133,6 @@ export default function JobList() {
                       {job.salary      && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
                       {job.posted_date && <span className="flex items-center gap-1"><Calendar size={13} />{job.posted_date}</span>}
                     </div>
-                    {/* Show short description snippet only, no full dump */}
-                    {job.description && (
-                      <p className="text-xs text-gray-400 mt-1 line-clamp-2">
-                        {job.description.slice(0, 180)}{job.description.length > 180 ? '...' : ''}
-                      </p>
-                    )}
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     <ScoreBadge score={job.match_score} />
