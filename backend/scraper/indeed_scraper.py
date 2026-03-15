@@ -18,6 +18,24 @@ USER_AGENTS = [
     "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
 ]
 
+BLOCK_SIGNALS = [
+    "additional verification required",
+    "ray id",
+    "cloudflare",
+    "access denied",
+    "verify you are human",
+    "captcha",
+    "unusual traffic",
+    "please enable cookies",
+    "robot or human",
+    "are you a robot",
+]
+
+
+def _is_blocked(text: str) -> bool:
+    low = text.lower()
+    return any(signal in low for signal in BLOCK_SIGNALS)
+
 
 def _build_search_url(keyword: str, location: str, offset: int = 0) -> str:
     q   = keyword.replace(" ", "+")
@@ -42,7 +60,6 @@ def _extract_salary(text: str) -> str:
 
 
 def _extract_location(text: str) -> str:
-    # Look for suburb + state pattern e.g. "Adelaide SA" or "Adelaide, SA"
     match = re.search(r"([A-Z][a-zA-Z ]+,?\s*(?:SA|NSW|VIC|QLD|WA|TAS|ACT|NT))", text)
     return match.group(1).strip() if match else ""
 
@@ -66,7 +83,6 @@ async def _extract_job_cards(page) -> List[Dict]:
 
     for card in cards:
         try:
-            # Title
             title_el = await card.query_selector(
                 '[class*="jobTitle"] a, h2 a[data-jk], a[id^="job_"]'
             )
@@ -76,27 +92,22 @@ async def _extract_job_cards(page) -> List[Dict]:
             if not title or title.lower() in {"job title", ""}:
                 continue
 
-            # URL
             href = await title_el.get_attribute("href") or ""
             if not href or href.lower().startswith("javascript"):
                 continue
             job_url = href if href.startswith("http") else BASE_URL + href
-            # Strip tracking params after the job key
             job_url = re.sub(r"&[a-z]+=(?!(?:jk|fccid))[^&]+", "", job_url)
 
-            # Company
             company_el = await card.query_selector(
                 '[data-testid="company-name"], .companyName, [class*="companyName"]'
             )
             company = (await company_el.inner_text()).strip() if company_el else "Unknown"
 
-            # Location
             loc_el = await card.query_selector(
                 '[data-testid="text-location"], .companyLocation, [class*="companyLocation"]'
             )
             location = (await loc_el.inner_text()).strip() if loc_el else ""
 
-            # Salary (optional - may not appear on card)
             sal_el = await card.query_selector(
                 '[class*="salary"], [data-testid*="salary"]'
             )
@@ -125,7 +136,11 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
         await page.goto(job_url, wait_until="domcontentloaded", timeout=20000)
         await asyncio.sleep(random.uniform(2.0, 4.0))
 
-        # Indeed detail page selectors in order of preference
+        page_text = await page.evaluate("() => document.body?.innerText || ''")
+        if _is_blocked(page_text):
+            logger.warning(f"Indeed: blocked page detected for {job_url} - skipping description")
+            return {}
+
         DESC_SELECTORS = [
             "#jobDescriptionText",
             "[class*='jobsearch-jobDescriptionText']",
@@ -143,7 +158,6 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
                     logger.info(f"Indeed: description from '{selector}', len={len(description)}")
                     break
 
-        # Last resort - strip nav/header/footer then grab body
         if not description:
             description = await page.evaluate("""
                 () => {
@@ -155,9 +169,12 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
                 }
             """)
             description = _clean_text(description)
+            # If fallback also looks like a block page, discard
+            if _is_blocked(description):
+                logger.warning(f"Indeed: fallback body also blocked for {job_url}")
+                return {}
             logger.info(f"Indeed: description from body fallback, len={len(description)}")
 
-        # Posted date
         posted_date = ""
         date_el = await page.query_selector(
             '[class*="posted"], [class*="date"], [data-testid*="date"]'
@@ -165,10 +182,7 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
         if date_el:
             posted_date = (await date_el.inner_text()).strip()[:50]
 
-        # Improve salary from description if not found on card
-        salary = _extract_salary(description)
-
-        # Improve location from description if not found on card
+        salary   = _extract_salary(description)
         location = _extract_location(description)
 
         return {
@@ -212,7 +226,6 @@ async def scrape_indeed(
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             }
         )
-        # Hide webdriver flag
         await context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
@@ -231,10 +244,9 @@ async def scrape_indeed(
                     logger.warning(f"Indeed: timeout loading {url}")
                     continue
 
-                # Check for CAPTCHA / block page
                 page_text = await page.evaluate("() => document.body?.innerText || ''")
-                if any(x in page_text.lower() for x in ["captcha", "verify you are human", "access denied", "unusual traffic"]):
-                    logger.warning(f"Indeed: blocked/CAPTCHA on page {page_num + 1} for '{keyword}' - stopping keyword")
+                if _is_blocked(page_text):
+                    logger.warning(f"Indeed: blocked on page {page_num + 1} for '{keyword}' - stopping keyword")
                     break
 
                 cards = await _extract_job_cards(page)
@@ -252,7 +264,6 @@ async def scrape_indeed(
                         job["description"] = detail["description"]
                     if detail.get("posted_date"):
                         job["posted_date"] = detail["posted_date"]
-                    # Only override card values if detail found something better
                     if detail.get("salary") and not job["salary"]:
                         job["salary"] = detail["salary"]
                     if detail.get("location") and not job["location"]:

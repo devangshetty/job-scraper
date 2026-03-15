@@ -18,6 +18,22 @@ USER_AGENTS = [
 
 BASE_URL = "https://www.seek.com.au"
 
+BLOCK_SIGNALS = [
+    "additional verification required",
+    "ray id",
+    "cloudflare",
+    "access denied",
+    "verify you are human",
+    "captcha",
+    "unusual traffic",
+    "please enable cookies",
+]
+
+
+def _is_blocked(text: str) -> bool:
+    low = text.lower()
+    return any(signal in low for signal in BLOCK_SIGNALS)
+
 
 def _build_search_url(keyword: str, location: str, page: int = 1) -> str:
     slug = keyword.lower().replace(" ", "-")
@@ -83,6 +99,12 @@ async def _fetch_job_description(page, job_url: str) -> tuple:
     try:
         await page.goto(job_url, wait_until="domcontentloaded", timeout=20000)
         await asyncio.sleep(random.uniform(1.5, 3.0))
+
+        # Check for block/CAPTCHA page before extracting
+        page_text = await page.evaluate("() => document.body?.innerText || ''")
+        if _is_blocked(page_text):
+            logger.warning(f"Seek: blocked page detected for {job_url} - skipping description")
+            return "", ""
 
         desc_el = await page.query_selector('[data-automation="jobAdDetails"]')
         if not desc_el:
