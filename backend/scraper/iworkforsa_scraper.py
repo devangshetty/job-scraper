@@ -3,12 +3,10 @@ import random
 import logging
 from typing import List, Dict
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
-from scraper.parser import clean_text
 
 logger = logging.getLogger(__name__)
 
 BASE_URL         = "https://www.iworkfor.sa.gov.au"
-# value=40666 confirmed from live page option list
 ICT_SELECT_VALUE = "40666"
 CATEGORY_SELECT  = "select[name='c_179[]']"
 
@@ -17,6 +15,15 @@ USER_AGENTS = [
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+]
+
+# Selectors tried in order - most specific first, body last as fallback
+DESC_SELECTORS = [
+    "#brs_mainContent",
+    ".job-description",
+    ".jobAdPage",
+    "article",
+    "main",
 ]
 
 
@@ -36,9 +43,7 @@ async def _get_search_frame(page):
 
 
 async def _select_ict_category(frame) -> bool:
-    """Set the hidden multiselect to ICT using JavaScript evaluate to bypass visibility."""
     try:
-        # use JS to set the value directly on the hidden <select multiple>
         result = await frame.evaluate("""
             () => {
                 const sel = document.querySelector("select[name='c_179[]']");
@@ -46,7 +51,6 @@ async def _select_ict_category(frame) -> bool:
                 for (const opt of sel.options) {
                     opt.selected = (opt.value === '40666');
                 }
-                // trigger change event so the widget picks it up
                 sel.dispatchEvent(new Event('change', { bubbles: true }));
                 return 'ok';
             }
@@ -63,11 +67,15 @@ def _is_valid_job_url(href: str) -> bool:
     if not href:
         return False
     low = href.lower().strip()
-    if low.startswith("javascript"):
-        return False
-    if low.startswith("#"):
+    if low.startswith("javascript") or low.startswith("#"):
         return False
     return True
+
+
+def _clean_text(raw: str) -> str:
+    """Collapse whitespace and strip leading/trailing space."""
+    import re
+    return re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", raw)).strip()
 
 
 async def _extract_job_rows(frame) -> List[Dict]:
@@ -161,14 +169,32 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
             elif "salary" in label or "remuneration" in label:
                 salary = value
 
-        desc_el = await frame.query_selector("#brs_mainContent, .jobAdPage, main, article")
+        # Try specific content selectors first - use inner_text() not inner_html()
         description = ""
-        if desc_el:
-            description = clean_text(await desc_el.inner_html())
-        else:
-            body_el = await frame.query_selector("body")
-            if body_el:
-                description = clean_text(await body_el.inner_html())
+        for selector in DESC_SELECTORS:
+            desc_el = await frame.query_selector(selector)
+            if desc_el:
+                raw = (await desc_el.inner_text()).strip()
+                if len(raw) > 100:  # must be meaningful content, not a stray element
+                    description = _clean_text(raw)
+                    logger.info(f"iworkforsa: description from '{selector}', len={len(description)}")
+                    break
+
+        # Last resort: grab body text but strip nav/header/footer first via JS
+        if not description:
+            description = await frame.evaluate("""
+                () => {
+                    const remove = ['nav', 'header', 'footer', '.nav', '.header', '.footer',
+                                    '#brs_header', '#brs_footer', '#brs_nav', 'script', 'style'];
+                    remove.forEach(sel => {
+                        document.querySelectorAll(sel).forEach(el => el.remove());
+                    });
+                    return (document.body?.innerText || '').trim();
+                }
+            """)
+            import re
+            description = re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", description)).strip()
+            logger.info(f"iworkforsa: description from body fallback, len={len(description)}")
 
         return {"description": description, "location": location, "salary": salary}
 
