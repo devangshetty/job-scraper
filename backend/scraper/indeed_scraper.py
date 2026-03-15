@@ -59,145 +59,34 @@ def _extract_salary(text: str) -> str:
     return match.group(1).strip()[:80] if match else ""
 
 
-def _extract_location(text: str) -> str:
+def _extract_location(text: str, fallback: str = "") -> str:
     match = re.search(r"([A-Z][a-zA-Z ]+,?\s*(?:SA|NSW|VIC|QLD|WA|TAS|ACT|NT))", text)
-    return match.group(1).strip() if match else ""
+    return match.group(1).strip() if match else fallback
 
 
-async def _extract_job_cards(page) -> List[Dict]:
-    jobs = []
-
-    try:
-        await page.wait_for_selector(
-            'a[data-jk], .job_seen_beacon, [class*="jobCard"], td.resultContent',
-            timeout=15000
-        )
-    except PWTimeout:
-        logger.warning("Indeed: no job cards found on page")
-        return jobs
-
-    cards = await page.query_selector_all(
-        '.job_seen_beacon, [class*="jobCard"]:not([class*="jobCardShelf"]), td.resultContent'
-    )
-    logger.info(f"Indeed: found {len(cards)} raw cards")
-
-    for card in cards:
+async def _get_inline_description(page) -> str:
+    """
+    Indeed loads the full job description in a right-side panel on the
+    search results page when a card is clicked. We read it from there
+    instead of navigating to the detail URL, avoiding Cloudflare entirely.
+    """
+    PANEL_SELECTORS = [
+        "#jobDescriptionText",
+        "[class*='jobsearch-jobDescriptionText']",
+        "[id*='jobDescription']",
+        ".jobsearch-JobComponent-description",
+    ]
+    for selector in PANEL_SELECTORS:
         try:
-            title_el = await card.query_selector(
-                '[class*="jobTitle"] a, h2 a[data-jk], a[id^="job_"]'
-            )
-            if not title_el:
-                continue
-            title = (await title_el.inner_text()).strip()
-            if not title or title.lower() in {"job title", ""}:
-                continue
-
-            href = await title_el.get_attribute("href") or ""
-            if not href or href.lower().startswith("javascript"):
-                continue
-            job_url = href if href.startswith("http") else BASE_URL + href
-            job_url = re.sub(r"&[a-z]+=(?!(?:jk|fccid))[^&]+", "", job_url)
-
-            company_el = await card.query_selector(
-                '[data-testid="company-name"], .companyName, [class*="companyName"]'
-            )
-            company = (await company_el.inner_text()).strip() if company_el else "Unknown"
-
-            loc_el = await card.query_selector(
-                '[data-testid="text-location"], .companyLocation, [class*="companyLocation"]'
-            )
-            location = (await loc_el.inner_text()).strip() if loc_el else ""
-
-            sal_el = await card.query_selector(
-                '[class*="salary"], [data-testid*="salary"]'
-            )
-            salary = (await sal_el.inner_text()).strip() if sal_el else ""
-
-            jobs.append({
-                "job_title":       title,
-                "company":         company,
-                "location":        location,
-                "salary":          salary,
-                "application_url": job_url,
-                "description":     "",
-                "posted_date":     "",
-                "source":          "indeed",
-            })
-        except Exception as e:
-            logger.warning(f"Indeed card parse error: {e}")
-            continue
-
-    logger.info(f"Indeed: extracted {len(jobs)} valid cards")
-    return jobs
-
-
-async def _fetch_job_detail(page, job_url: str) -> Dict:
-    try:
-        await page.goto(job_url, wait_until="domcontentloaded", timeout=20000)
-        await asyncio.sleep(random.uniform(2.0, 4.0))
-
-        page_text = await page.evaluate("() => document.body?.innerText || ''")
-        if _is_blocked(page_text):
-            logger.warning(f"Indeed: blocked page detected for {job_url} - skipping description")
-            return {}
-
-        DESC_SELECTORS = [
-            "#jobDescriptionText",
-            "[class*='jobsearch-jobDescriptionText']",
-            "[class*='jobDescription']",
-            "#job-content",
-        ]
-
-        description = ""
-        for selector in DESC_SELECTORS:
+            await page.wait_for_selector(selector, timeout=6000)
             el = await page.query_selector(selector)
             if el:
                 raw = (await el.inner_text()).strip()
                 if len(raw) > 100:
-                    description = _clean_text(raw)
-                    logger.info(f"Indeed: description from '{selector}', len={len(description)}")
-                    break
-
-        if not description:
-            description = await page.evaluate("""
-                () => {
-                    ['header','footer','nav','#indeed-cookie-consent-banner',
-                     '#mosaic-provider-reportcontent','script','style'].forEach(s => {
-                        document.querySelectorAll(s).forEach(el => el.remove());
-                    });
-                    return (document.body?.innerText || '').trim();
-                }
-            """)
-            description = _clean_text(description)
-            # If fallback also looks like a block page, discard
-            if _is_blocked(description):
-                logger.warning(f"Indeed: fallback body also blocked for {job_url}")
-                return {}
-            logger.info(f"Indeed: description from body fallback, len={len(description)}")
-
-        posted_date = ""
-        date_el = await page.query_selector(
-            '[class*="posted"], [class*="date"], [data-testid*="date"]'
-        )
-        if date_el:
-            posted_date = (await date_el.inner_text()).strip()[:50]
-
-        salary   = _extract_salary(description)
-        location = _extract_location(description)
-
-        return {
-            "description": description,
-            "posted_date": posted_date,
-            "salary":      salary,
-            "location":    location,
-        }
-
-    except PWTimeout:
-        logger.warning(f"Indeed: timeout on {job_url}")
-        return {}
-    except Exception as e:
-        logger.warning(f"Indeed: detail fetch error {job_url}: {e}")
-        return {}
+                    return _clean_text(raw)
+        except PWTimeout:
+            continue
+    return ""
 
 
 async def scrape_indeed(
@@ -249,29 +138,104 @@ async def scrape_indeed(
                     logger.warning(f"Indeed: blocked on page {page_num + 1} for '{keyword}' - stopping keyword")
                     break
 
-                cards = await _extract_job_cards(page)
-                if not cards:
+                # Grab all job cards on the listing page
+                try:
+                    await page.wait_for_selector(
+                        '.job_seen_beacon, [class*="jobCard"], td.resultContent',
+                        timeout=15000
+                    )
+                except PWTimeout:
                     logger.info(f"Indeed: no cards on page {page_num + 1}, stopping keyword")
                     break
 
-                new_cards = [c for c in cards if c["application_url"] not in seen_urls]
-                for c in new_cards:
-                    seen_urls.add(c["application_url"])
+                cards = await page.query_selector_all(
+                    '.job_seen_beacon, td.resultContent'
+                )
+                logger.info(f"Indeed: found {len(cards)} cards on page {page_num + 1}")
 
-                for job in new_cards:
-                    detail = await _fetch_job_detail(page, job["application_url"])
-                    if detail.get("description"):
-                        job["description"] = detail["description"]
-                    if detail.get("posted_date"):
-                        job["posted_date"] = detail["posted_date"]
-                    if detail.get("salary") and not job["salary"]:
-                        job["salary"] = detail["salary"]
-                    if detail.get("location") and not job["location"]:
-                        job["location"] = detail["location"]
-                    await asyncio.sleep(random.uniform(2.0, 4.0))
+                if not cards:
+                    break
 
-                all_jobs.extend(new_cards)
-                logger.info(f"Indeed: page {page_num + 1}: {len(new_cards)} new jobs for '{keyword}'")
+                for card in cards:
+                    try:
+                        # Title + URL
+                        title_el = await card.query_selector(
+                            '[class*="jobTitle"] a, h2 a[data-jk], a[id^="job_"]'
+                        )
+                        if not title_el:
+                            continue
+                        title = (await title_el.inner_text()).strip()
+                        if not title or title.lower() in {"job title", ""}:
+                            continue
+
+                        href = await title_el.get_attribute("href") or ""
+                        if not href or href.lower().startswith("javascript"):
+                            continue
+                        job_url = href if href.startswith("http") else BASE_URL + href
+
+                        # Deduplicate by URL
+                        if job_url in seen_urls:
+                            continue
+                        seen_urls.add(job_url)
+
+                        # Company
+                        company_el = await card.query_selector(
+                            '[data-testid="company-name"], .companyName, [class*="companyName"]'
+                        )
+                        company = (await company_el.inner_text()).strip() if company_el else "Unknown"
+
+                        # Location from card
+                        loc_el = await card.query_selector(
+                            '[data-testid="text-location"], .companyLocation, [class*="companyLocation"]'
+                        )
+                        location_text = (await loc_el.inner_text()).strip() if loc_el else ""
+
+                        # Salary from card
+                        sal_el = await card.query_selector(
+                            '[class*="salary"], [data-testid*="salary"]'
+                        )
+                        salary = (await sal_el.inner_text()).strip() if sal_el else ""
+
+                        # Click the card to load the inline description panel
+                        await title_el.click()
+                        await asyncio.sleep(random.uniform(1.5, 3.0))
+
+                        description = await _get_inline_description(page)
+
+                        # Extract salary from description if not on card
+                        if not salary and description:
+                            salary = _extract_salary(description)
+
+                        # Improve location from description if card only had generic text
+                        if description:
+                            location_text = _extract_location(description, fallback=location_text)
+
+                        # Posted date from the panel
+                        posted_date = ""
+                        date_el = await page.query_selector(
+                            '[class*="date"], [data-testid*="date"], [class*="posted"]'
+                        )
+                        if date_el:
+                            posted_date = (await date_el.inner_text()).strip()[:50]
+
+                        all_jobs.append({
+                            "job_title":       title,
+                            "company":         company,
+                            "location":        location_text,
+                            "salary":          salary,
+                            "application_url": job_url,
+                            "description":     description,
+                            "posted_date":     posted_date,
+                            "source":          "indeed",
+                        })
+                        logger.info(f"Indeed: scraped '{title}' @ {company}, desc_len={len(description)}")
+                        await asyncio.sleep(random.uniform(1.0, 2.5))
+
+                    except Exception as e:
+                        logger.warning(f"Indeed: card error: {e}")
+                        continue
+
+                logger.info(f"Indeed: page {page_num + 1} done, total so far: {len(all_jobs)}")
                 await asyncio.sleep(random.uniform(3.0, 6.0))
 
         await browser.close()
