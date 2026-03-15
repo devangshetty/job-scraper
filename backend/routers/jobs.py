@@ -70,49 +70,58 @@ def get_stats(db: Session = Depends(get_db)):
 
 @router.get("/debug/{job_id}")
 def debug_job(job_id: int, db: Session = Depends(get_db)):
-    """Debug endpoint - shows raw description info for a job."""
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         return {"error": "not found"}
     desc = job.description or ""
+    loc  = job.location or ""
     return {
-        "id":              job.id,
-        "title":           job.job_title,
-        "source":          job.source,
-        "desc_length":     len(desc),
-        "desc_first_500":  desc[:500],
-        "desc_last_200":   desc[-200:],
-        "looks_like_html": "<" in desc and ">" in desc,
-        "newline_count":   desc.count("\n"),
-        "space_run_count": len(re.findall(r" {5,}", desc)),
+        "id":               job.id,
+        "title":            job.job_title,
+        "source":           job.source,
+        "location":         loc,
+        "location_length":  len(loc),
+        "desc_length":      len(desc),
+        "desc_first_500":   desc[:500],
+        "looks_like_html":  "<" in desc and ">" in desc,
     }
 
 
 @router.post("/fix-descriptions")
 def fix_descriptions(db: Session = Depends(get_db)):
     """
-    Bulk-clean existing iworkforsa job descriptions in the DB.
-    Collapses excessive whitespace and trims the text.
-    Call this once via: curl -X POST http://localhost:8000/api/jobs/fix-descriptions
+    Bulk-fix existing iworkforsa jobs:
+    - Clears location if it's longer than 100 chars (it's been contaminated with full page text)
+    - Extracts a clean postcode/suburb from description if possible
+    - Collapses whitespace in description
     """
     jobs = db.query(Job).filter(Job.source == "iworkforsa").all()
     fixed = 0
     for job in jobs:
-        if not job.description:
-            continue
-        original_len = len(job.description)
-        cleaned = job.description
-        # Strip any residual HTML tags
-        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
-        # Collapse runs of whitespace/newlines
-        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        cleaned = cleaned.strip()
-        if len(cleaned) != original_len:
-            job.description = cleaned
+        changed = False
+
+        # Fix bad location - if it's longer than 100 chars it's definitely page content, not a suburb
+        if job.location and len(job.location) > 100:
+            # Try to extract postcode + suburb from description e.g. "5000 - ADELAIDE"
+            match = re.search(r"(\d{4}\s*[-–]\s*[A-Z ]+)", job.description or "", re.IGNORECASE)
+            job.location = match.group(1).strip() if match else "Adelaide SA"
+            changed = True
+
+        # Clean description - strip HTML tags and collapse whitespace
+        if job.description:
+            cleaned = re.sub(r"<[^>]+>", " ", job.description)
+            cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+            cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+            cleaned = cleaned.strip()
+            if cleaned != job.description:
+                job.description = cleaned
+                changed = True
+
+        if changed:
             fixed += 1
+
     db.commit()
-    logger.info(f"fix-descriptions: cleaned {fixed} iworkforsa jobs")
+    logger.info(f"fix-descriptions: fixed {fixed} iworkforsa jobs")
     return {"fixed": fixed, "total_iworkforsa": len(jobs)}
 
 
@@ -143,7 +152,6 @@ def update_job(job_id: int, update: dict, db: Session = Depends(get_db)):
 
 @router.delete("/purge/non-ict")
 def purge_non_ict(db: Session = Depends(get_db)):
-    """Delete iworkforsa jobs that are clearly not ICT (low score + no ICT keywords)."""
     result = db.execute(text("""
         DELETE FROM jobs
         WHERE source = 'iworkforsa'

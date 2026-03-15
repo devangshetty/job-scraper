@@ -1,6 +1,7 @@
 import asyncio
 import random
 import logging
+import re
 from typing import List, Dict
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
@@ -8,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 BASE_URL         = "https://www.iworkfor.sa.gov.au"
 ICT_SELECT_VALUE = "40666"
-CATEGORY_SELECT  = "select[name='c_179[]']"
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -17,7 +17,6 @@ USER_AGENTS = [
     "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
 ]
 
-# Selectors tried in order - most specific first, body last as fallback
 DESC_SELECTORS = [
     "#brs_mainContent",
     ".job-description",
@@ -25,6 +24,11 @@ DESC_SELECTORS = [
     "article",
     "main",
 ]
+
+
+def _clean_text(raw: str) -> str:
+    cleaned = re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", raw))
+    return cleaned.strip()
 
 
 async def _get_search_frame(page):
@@ -67,15 +71,7 @@ def _is_valid_job_url(href: str) -> bool:
     if not href:
         return False
     low = href.lower().strip()
-    if low.startswith("javascript") or low.startswith("#"):
-        return False
-    return True
-
-
-def _clean_text(raw: str) -> str:
-    """Collapse whitespace and strip leading/trailing space."""
-    import re
-    return re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", raw)).strip()
+    return not (low.startswith("javascript") or low.startswith("#"))
 
 
 async def _extract_job_rows(frame) -> List[Dict]:
@@ -101,16 +97,12 @@ async def _extract_job_rows(frame) -> List[Dict]:
                 continue
             title = (await link_el.inner_text()).strip()
             href  = (await link_el.get_attribute("href") or "").strip()
-
             if not title or not _is_valid_job_url(href):
                 continue
-
             skip_titles = {"job title", "next", "last", "first", "previous", "prev"}
             if title.lower() in skip_titles:
                 continue
-
             job_url = href if href.startswith("http") else BASE_URL + href
-
             posted = ""
             agency = ""
             if len(cells) >= 4:
@@ -118,7 +110,6 @@ async def _extract_job_rows(frame) -> List[Dict]:
                 agency = (await cells[3].inner_text()).strip()
             elif len(cells) >= 2:
                 agency = (await cells[1].inner_text()).strip()
-
             jobs.append({
                 "job_title":       title,
                 "company":         agency,
@@ -132,7 +123,6 @@ async def _extract_job_rows(frame) -> List[Dict]:
         except Exception as e:
             logger.warning(f"iworkforsa row parse error: {e}")
             continue
-
     logger.info(f"iworkforsa: extracted {len(jobs)} valid job rows")
     return jobs
 
@@ -152,49 +142,47 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
             except Exception:
                 continue
 
-        location = ""
-        salary   = ""
-
-        bold_els = await frame.query_selector_all("b, strong")
-        for el in bold_els:
-            label = (await el.inner_text()).strip().lower()
-            try:
-                parent      = await el.evaluate_handle("el => el.parentElement")
-                parent_text = await parent.as_element().inner_text()
-                value       = parent_text.replace(await el.inner_text(), "").strip().lstrip(":")
-            except Exception:
-                value = ""
-            if "location" in label:
-                location = value
-            elif "salary" in label or "remuneration" in label:
-                salary = value
-
-        # Try specific content selectors first - use inner_text() not inner_html()
+        # Get description using inner_text() on specific selectors only
         description = ""
         for selector in DESC_SELECTORS:
             desc_el = await frame.query_selector(selector)
             if desc_el:
                 raw = (await desc_el.inner_text()).strip()
-                if len(raw) > 100:  # must be meaningful content, not a stray element
+                if len(raw) > 100:
                     description = _clean_text(raw)
                     logger.info(f"iworkforsa: description from '{selector}', len={len(description)}")
                     break
 
-        # Last resort: grab body text but strip nav/header/footer first via JS
         if not description:
             description = await frame.evaluate("""
                 () => {
-                    const remove = ['nav', 'header', 'footer', '.nav', '.header', '.footer',
-                                    '#brs_header', '#brs_footer', '#brs_nav', 'script', 'style'];
-                    remove.forEach(sel => {
+                    ['nav','header','footer','#brs_header','#brs_footer',
+                     '#brs_nav','script','style'].forEach(sel => {
                         document.querySelectorAll(sel).forEach(el => el.remove());
                     });
                     return (document.body?.innerText || '').trim();
                 }
             """)
-            import re
-            description = re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", description)).strip()
+            description = _clean_text(description)
             logger.info(f"iworkforsa: description from body fallback, len={len(description)}")
+
+        # Extract location: look for postcode pattern e.g. "5000 - ADELAIDE" in the description
+        # Never use parent element text as that captures the whole page
+        location = ""
+        loc_match = re.search(r"(\d{4}\s*[-–]\s*[A-Z][A-Z ]+)", description)
+        if loc_match:
+            location = loc_match.group(1).strip()
+            logger.info(f"iworkforsa: location extracted: '{location}'")
+
+        # Extract salary: look for ASO/TGO/PO grade or $ amount
+        salary = ""
+        sal_match = re.search(
+            r"((?:ASO|TGO|PO|MAS|OPS|\$)[\w\d\s,$./–-]+(?:per annum|p\.a\.|pa)?)",
+            description, re.IGNORECASE
+        )
+        if sal_match:
+            salary = sal_match.group(1).strip()[:80]  # cap length
+            logger.info(f"iworkforsa: salary extracted: '{salary}'")
 
         return {"description": description, "location": location, "salary": salary}
 
@@ -224,7 +212,6 @@ async def scrape_iworkforsa() -> List[Dict]:
             await asyncio.sleep(3.0)
 
             frame = await _get_search_frame(page)
-
             await _select_ict_category(frame)
 
             submit = await frame.query_selector(
