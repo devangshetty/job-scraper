@@ -14,7 +14,7 @@ My personal job scraping and resume matching tool. I scrape job listings from Se
 - **Resume file:** `Resume-V10.pdf`
 
 **Stack:**
-- Backend: FastAPI + SQLAlchemy + SQLite + Playwright + scikit-learn
+- Backend: FastAPI + SQLAlchemy + SQLite + Playwright + playwright-stealth + scikit-learn
 - Frontend: React + TypeScript + Vite + TailwindCSS + TanStack Query + React Router
 
 ---
@@ -33,7 +33,7 @@ job-scraper/
       scrape.py                # Scrape trigger endpoints + in-memory status tracking
     scraper/
       seek_scraper.py          # Playwright scraper for Seek
-      indeed_scraper.py        # Playwright scraper for Indeed
+      indeed_scraper.py        # Playwright scraper for Indeed (metadata-only)
       iworkforsa_scraper.py    # Playwright scraper for SA Gov jobs
       parser.py                # clean_text(), parse_salary() helpers
     matcher/
@@ -58,7 +58,7 @@ job-scraper/
 - **Status tracking** is in-memory in `scrape.py` as a dict keyed by source name
 - **Frontend polls `/api/scrape/status`** every 3s while any source is running
 - **All job list state lives in the URL** as query params so browser back/forward works correctly
-- **Indeed uses inline panel scraping** - never navigates to detail URLs to avoid Cloudflare
+- **Indeed is metadata-only** - search page mosaic JSON parsed for title/company/salary/snippet. No detail page requests. Full descriptions are blocked by Cloudflare regardless of approach tried.
 
 ---
 
@@ -78,7 +78,7 @@ job-scraper/
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/jobs` | List jobs with filters: source, min_score, search, is_applied, sort_by, page, page_size |
-| GET    | `/api/jobs/stats` | Returns total, applied, avg_score, top_jobs |
+| GET    | `/api/jobs/stats` | Returns total, applied, avg_score, high_match, top_jobs |
 | GET    | `/api/jobs/{id}` | Single job |
 | PATCH  | `/api/jobs/{id}` | Update notes, is_applied |
 | POST   | `/api/jobs/rescore/{source}` | Re-run TF-IDF scoring on all jobs from source that have a description |
@@ -114,11 +114,32 @@ iWorkForSA: no config, scrapes ICT category automatically
 ## Dashboard ScrapeCard Features
 
 Each card (Seek / iWorkForSA / Indeed) has:
-- **Job count badge** - live count, e.g. "87 jobs"
+- **Card title and job count badge are clickable** - navigates to `/jobs?source=<source>`
 - **Run Now** - triggers background scrape, spinner while running
 - **Re-score** - re-runs TF-IDF on all jobs from that source that have a description
 - **Clear Jobs** - two-click confirm, second click shows exact count e.g. "Delete 87 jobs?"
 - Buttons disabled when job count is 0 or a scrape is in progress
+
+## Dashboard Stats Tiles
+
+All four stats tiles (Total Jobs, Applied, High Match, Avg Score) are clickable:
+
+| Tile | Navigates to |
+|------|--------------|
+| Total Jobs | `/jobs` |
+| Applied | `/jobs?applied=applied` |
+| High Match | `/jobs?min=0.7&sort=match_score` |
+| Avg Score | `/jobs?sort=match_score` |
+
+---
+
+## JobDetail - Indeed-specific UI
+
+Since Indeed jobs have no full description:
+- Blue info banner shown explaining full description is unavailable, links user to apply on Indeed
+- Matched/missing skills section is hidden entirely for Indeed jobs (snippet is too short to score meaningfully)
+- Description section label is "Snippet" instead of "Job Description"
+- Score still shows but should be treated as approximate
 
 ---
 
@@ -142,80 +163,47 @@ BLOCK_SIGNALS = [
 
 ---
 
-### 2. Indeed - Cloudflare blocking detail page navigation
+### 2. Indeed - All attempts to scrape full descriptions blocked
 
-**Symptom:** All Indeed job descriptions blank. Direct navigation to job detail URLs triggered Cloudflare.
+**Symptom:** All Indeed job descriptions blank regardless of approach used.
 
-**Root cause:** Indeed routes detail URLs through tracking redirects that Cloudflare intercepts for headless browsers.
+**Approaches tried (all failed):**
+1. Direct Playwright navigation to `/viewjob?jk=<id>` - Cloudflare 403
+2. Click card inline panel on search page - `Cannot find context` after first card, DOM index shifting after clicks
+3. `data-jk` selector re-query per card - worked for a while, then Indeed started blocking after first keyword
+4. Fresh browser context per keyword with playwright-stealth - still 403 on detail pages
+5. Plain `httpx` with mosaic JSON parsing - 403 on search page itself (TLS fingerprint blocked before HTML)
+6. Playwright for search page session + httpx for detail pages using session cookies - detail endpoint `m/basecamp/viewjob?viewtype=embedded` also 403
 
-**Fix:** Don't navigate to detail URLs. Instead click each card title on the search results page - Indeed loads the full description in a right-side inline panel on the same page. No new navigation, no Cloudflare.
+**Root cause:** Indeed + Cloudflare blocks at TLS/IP level for automated clients. From a single residential IP without IP rotation, there is no reliable way to fetch full descriptions.
 
----
-
-### 3. Indeed - `Cannot find context with specified id` after first card click
-
-**Symptom:** First card scraped fine, then 30+ `Protocol error (DOM.describeNode): Cannot find context with specified id` on every subsequent card.
-
-**Root cause:** All card `ElementHandle` objects were queried upfront. Clicking card 0 caused a partial DOM replacement in the panel area, invalidating all pre-queried handles.
-
-**Fix:** Use `page.evaluate()` to extract all card metadata as plain JSON before clicking anything. Re-query a fresh handle per card at click time.
-
----
-
-### 4. Indeed - `card index N out of range` on every even index
-
-**Symptom:** Cards at index 2, 4, 6, 8... all logged `card index N out of range after re-query`. All `desc_len=0`.
-
-**Root cause:** After clicking card 0, Indeed inserts a sponsored row into the DOM, shifting all subsequent cards down by one index. Card originally at index 2 is now at index 3, etc.
-
-**Fix:** Stop using index-based re-location. Every Indeed card title link has a stable `data-jk` attribute. Click using `a[data-jk="{jk}"]` - immune to DOM index shifts.
-
-```python
-async def _click_card_by_jk(page, jk: str) -> bool:
-    el = await page.query_selector(f'a[data-jk="{jk}"]')
-    if not el:
-        return False
-    await el.click()
-    return True
-```
+**Final decision:** Metadata-only mode. Indeed scraper:
+- Loads search page with Playwright + stealth (search page loads fine)
+- Parses `window.mosaic.providerData["mosaic-provider-jobcards"]` JSON blob from page HTML
+- Stores the short `snippet` field as description - no detail page requests at all
+- Fast and reliable, no 403s
 
 ---
 
-### 5. Indeed - All keywords blocked after first one
-
-**Symptom:** First keyword scraped one page fine, all remaining keywords blocked immediately on page 1.
-
-**Root cause:** Indeed's bot detection accumulates fingerprint/session signals. Reusing the same browser context across keywords gave enough signal to block the session.
-
-**Fix:** Fresh browser + context per keyword. Each starts clean with a random user agent and no prior session. Delays increased: 6-10s between pages, 5-9s between keywords.
-
----
-
-### 6. Indeed - Duplicate jobs across keywords
+### 3. Indeed - Duplicate jobs across keywords
 
 **Symptom:** Same job appearing multiple times in the Indeed tab.
 
-**Root cause:** Indeed's job URLs include different tracking params per keyword search (`?vjk=`, `?from=`, etc.) so the same job has a different URL per keyword, bypassing URL-based dedup.
-
-**Fix:** Deduplicate by `data-jk` (Indeed's stable job key) instead of URL. `seen_jks` is shared across all keywords and pages. Also added `_canonical_url()` to strip tracking params from stored URLs, keeping just `/viewjob?jk=<value>`.
+**Fix:** Deduplicate by `jobkey` from mosaic JSON. `seen_jks` set is shared across all keywords and pages for a single scrape run.
 
 ---
 
-### 7. Indeed - Missing skills looked like placeholders (same across all jobs)
+### 4. Indeed - Missing skills looked like placeholders (same across all jobs)
 
-**Symptom:** Every Indeed job showed the exact same long list of missing skills.
+**Root cause:** Descriptions were empty so every skill was marked missing.
 
-**Root cause:** Descriptions weren't being scraped (desc_len=0), so every skill was marked missing since there was no text to match against.
-
-**Fix:**
-- `JobDetail.tsx` hides the matched/missing skills section when `job.description` is empty, replacing it with a yellow warning banner
-- Added `POST /api/jobs/rescore/{source}` endpoint and a **Re-score** button on each Dashboard card to re-run scoring after a successful scrape
+**Fix:** `JobDetail.tsx` hides matched/missing skills section entirely for Indeed jobs. Blue banner shown instead.
 
 ---
 
-### 8. Browser back button losing JobList state
+### 5. Browser back button losing JobList state
 
-**Symptom:** On Indeed tab, page 2, open a job, hit browser back - lands on All Jobs tab page 1 with no filters.
+**Symptom:** Open a job, hit browser back - lands on All Jobs tab page 1 with no filters.
 
 **Root cause:** All JobList state was in React `useState` which resets on navigation.
 
@@ -223,12 +211,11 @@ async def _click_card_by_jk(page, jk: str) -> bool:
 
 ---
 
-### 9. Apply button on Indeed jobs showed "Apply on Seek"
+### 6. Apply button on Indeed jobs showed "Apply on Seek"
 
-**Root cause:** `applyLabel` only checked for `iworkforsa` and fell through to a hardcoded `"Apply on Seek"` default.
+**Root cause:** `applyLabel` only checked for `iworkforsa` and fell through to hardcoded `"Apply on Seek"` default.
 
-**Fix:** Replaced with a `switch` covering all three sources:
-
+**Fix:**
 ```typescript
 function applyButtonLabel(source: string | null | undefined): string {
   switch (source) {
@@ -244,7 +231,8 @@ function applyButtonLabel(source: string | null | undefined): string {
 
 ## Known Limitations
 
-- Indeed inline panel approach depends on Indeed's current DOM structure - if they redesign, selectors in `PANEL_SELECTORS` and `_collect_card_metadata` will need updating
-- Seek Cloudflare blocks still produce empty descriptions for some jobs - no fix without residential proxies
+- Indeed only stores search snippet (~1-2 sentences) as description - scores for Indeed jobs are low confidence
+- To get full Indeed descriptions without paying for proxies/scraping APIs (ScrapFly, Apify, Browserless), manual copy-paste into notes is the only option
+- Seek Cloudflare blocks still produce empty descriptions for some jobs
 - No scrape scheduler - all scrapes are manually triggered from the Dashboard
 - Skills are updated by editing `resume_skills.py` directly - no UI for this yet
