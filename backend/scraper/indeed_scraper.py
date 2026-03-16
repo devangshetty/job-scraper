@@ -51,25 +51,6 @@ def _build_search_url(keyword: str, location: str, offset: int = 0) -> str:
     return f"{BASE_URL}/jobs?" + urlencode(params)
 
 
-def _clean_html(raw: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", raw)
-    text = re.sub(r"&nbsp;", " ", text)
-    text = re.sub(r"&amp;", "&", text)
-    text = re.sub(r"&lt;", "<", text)
-    text = re.sub(r"&gt;", ">", text)
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
-
-
-def _extract_salary(text: str) -> str:
-    m = re.search(
-        r"(\$[\d,]+(?:\s*[-\u2013]\s*\$[\d,]+)?(?:\s*(?:per\s+(?:annum|year|hour|day)|p\.a\.|pa|/hr|/year))?)",
-        text, re.IGNORECASE
-    )
-    return m.group(1).strip()[:80] if m else ""
-
-
 def _parse_mosaic(html: str) -> Optional[List[Dict]]:
     """Extract job cards from the mosaic JSON blob baked into the search page HTML."""
     matches = re.findall(
@@ -87,56 +68,15 @@ def _parse_mosaic(html: str) -> Optional[List[Dict]]:
         return None
 
 
-def _parse_detail(html: str) -> str:
-    """Extract description from the _initialData JSON on the embedded mobile detail page."""
-    matches = re.findall(r"_initialData=(\{.+?\});", html)
-    if not matches:
-        return ""
-    try:
-        data = json.loads(matches[0])
-        content = (
-            data["jobInfoWrapperModel"]["jobInfoModel"]
-            ["sanitizedJobDescription"]["content"]
-        )
-        return _clean_html(content)
-    except (json.JSONDecodeError, KeyError):
-        return ""
-
-
-async def _new_page(context):
-    page = await context.new_page()
-    if STEALTH_AVAILABLE:
-        await stealth_async(page)
-    return page
-
-
-async def _fetch_in_context(context, url: str) -> Optional[str]:
-    """
-    Fetch a URL using the browser context so it inherits the session cookies
-    and TLS fingerprint from the initial Playwright load.
-    """
-    page = await _new_page(context)
-    try:
-        resp = await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-        if resp and resp.status == 200:
-            html = await page.content()
-            return html
-        logger.warning(f"Indeed: HTTP {resp.status if resp else '?'} for {url}")
-        return None
-    except PWTimeout:
-        logger.warning(f"Indeed: timeout fetching {url}")
-        return None
-    finally:
-        await page.close()
-
-
 async def _scrape_keyword_page(
     context,
     url: str,
     seen_jks: set,
 ) -> Optional[List[Dict]]:
-    # Load the search page with a full browser page to establish session/cookies
-    page = await _new_page(context)
+    page = await context.new_page()
+    if STEALTH_AVAILABLE:
+        await stealth_async(page)
+
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=25000)
         await asyncio.sleep(random.uniform(2.0, 4.0))
@@ -153,7 +93,6 @@ async def _scrape_keyword_page(
         logger.warning(f"Indeed: blocked at {url}")
         return None
 
-    # Parse job cards directly from the embedded mosaic JSON - no clicking
     cards = _parse_mosaic(html)
     if cards is None:
         return None
@@ -166,6 +105,7 @@ async def _scrape_keyword_page(
         title   = card.get("displayTitle") or card.get("title", "")
         company = card.get("company", "Unknown")
         loc     = card.get("formattedLocation", "")
+        snippet = card.get("snippet", "")  # short description snippet Indeed includes
         salary  = ""
 
         sal = card.get("salarySnippet")
@@ -184,15 +124,8 @@ async def _scrape_keyword_page(
             continue
         seen_jks.add(jk)
 
-        # Fetch description from the mobile embedded endpoint using the same
-        # browser context - inherits cookies so it's not a cold request
-        detail_url = f"{BASE_URL}/m/basecamp/viewjob?viewtype=embedded&jk={jk}"
-        await asyncio.sleep(random.uniform(1.5, 3.0))
-        detail_html = await _fetch_in_context(context, detail_url)
-        description = _parse_detail(detail_html) if detail_html else ""
-
-        if not salary and description:
-            salary = _extract_salary(description)
+        # Strip HTML tags from snippet for use as a lightweight description
+        clean_snippet = re.sub(r"<[^>]+>", " ", snippet).strip() if snippet else ""
 
         jobs.append({
             "job_title":       title,
@@ -200,11 +133,11 @@ async def _scrape_keyword_page(
             "location":        loc,
             "salary":          salary,
             "application_url": f"{BASE_URL}/viewjob?jk={jk}",
-            "description":     description,
+            "description":     clean_snippet,
             "posted_date":     card.get("formattedRelativeTime", ""),
             "source":          "indeed",
         })
-        logger.info(f"Indeed: '{title}' @ {company} desc_len={len(description)}")
+        logger.info(f"Indeed: '{title}' @ {company} snippet_len={len(clean_snippet)}")
 
     return jobs
 
@@ -222,7 +155,6 @@ async def scrape_indeed(
 
     async with async_playwright() as pw:
         for keyword in keywords:
-            # Fresh browser + context per keyword to reset session state
             browser = await pw.chromium.launch(
                 headless=True,
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]

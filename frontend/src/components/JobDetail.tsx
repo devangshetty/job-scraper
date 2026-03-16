@@ -48,7 +48,8 @@ export default function JobDetail() {
 
   const matchedSkills = parseSkills(job.matched_skills);
   const missingSkills = parseSkills(job.missing_skills);
-  const hasDescription = !!job.description;
+  const isIndeed = job.source === 'indeed';
+  const hasDescription = !!job.description && job.description.length > 80;
 
   const scoreColor = !job.match_score ? 'text-gray-400' :
                      job.match_score >= 0.7 ? 'text-green-600' :
@@ -88,43 +89,59 @@ export default function JobDetail() {
           )}
         </div>
 
-        {hasDescription ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
-            <div>
-              <p className="text-xs font-semibold text-green-700 mb-1">Matched Skills</p>
-              <div className="flex flex-wrap gap-1">
-                {matchedSkills.length > 0
-                  ? matchedSkills.map(s => (
-                      <span key={s} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded">{s}</span>
-                    ))
-                  : <span className="text-xs text-gray-400">None detected</span>
-                }
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-red-600 mb-1">Missing Skills</p>
-              <div className="flex flex-wrap gap-1">
-                {missingSkills.slice(0, 10).map(s => (
-                  <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded">{s}</span>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="mb-5 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <p className="text-sm text-yellow-700">
-              No description was scraped for this job. Skills and match score may not be accurate.
-              Use Re-score on the Dashboard after a fresh scrape.
+        {/* Indeed metadata-only notice */}
+        {isIndeed && (
+          <div className="mb-5 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-blue-700">
+              Indeed limits automated access to full job descriptions. Match score and skills are based on the short snippet only.
+              Click <strong>Apply on Indeed</strong> below to view the full listing.
             </p>
           </div>
         )}
 
+        {/* Skills section - only show if there is enough description to be meaningful */}
+        {!isIndeed && (
+          hasDescription ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+              <div>
+                <p className="text-xs font-semibold text-green-700 mb-1">Matched Skills</p>
+                <div className="flex flex-wrap gap-1">
+                  {matchedSkills.length > 0
+                    ? matchedSkills.map(s => (
+                        <span key={s} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded">{s}</span>
+                      ))
+                    : <span className="text-xs text-gray-400">None detected</span>
+                  }
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-red-600 mb-1">Missing Skills</p>
+                <div className="flex flex-wrap gap-1">
+                  {missingSkills.slice(0, 10).map(s => (
+                    <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded">{s}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-5 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm text-yellow-700">
+                No description was scraped for this job. Skills and match score may not be accurate.
+                Use Re-score on the Dashboard after a fresh scrape.
+              </p>
+            </div>
+          )
+        )}
+
         <div className="mb-5">
-          <p className="text-xs font-semibold text-gray-500 mb-1">Job Description</p>
+          <p className="text-xs font-semibold text-gray-500 mb-1">
+            {isIndeed ? 'Snippet' : 'Job Description'}
+          </p>
           <div className="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 rounded p-3 max-h-80 overflow-y-auto leading-relaxed">
             {job.description || 'No description available.'}
           </div>
         </div>
+
         <div className="mb-5">
           <p className="text-xs font-semibold text-gray-500 mb-1">Your Notes</p>
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
@@ -135,6 +152,7 @@ export default function JobDetail() {
             Save Notes
           </button>
         </div>
+
         <div className="flex gap-3">
           <button onClick={() => updateM.mutate({ is_applied: !job.is_applied })}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
