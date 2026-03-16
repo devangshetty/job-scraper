@@ -2,7 +2,7 @@ import asyncio
 import random
 import logging
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,14 @@ BLOCK_SIGNALS = [
     "please enable cookies",
     "robot or human",
     "are you a robot",
+]
+
+PANEL_SELECTORS = [
+    "#jobDescriptionText",
+    "[class*='jobsearch-jobDescriptionText']",
+    "[id*='jobDescription']",
+    ".jobsearch-JobComponent-description",
+    "[class*='jobDescription']",
 ]
 
 
@@ -62,75 +70,121 @@ def _extract_location(text: str, fallback: str = "") -> str:
     return m.group(1).strip() if m else fallback
 
 
-async def _get_inline_description(page) -> str:
-    PANEL_SELECTORS = [
-        "#jobDescriptionText",
-        "[class*='jobsearch-jobDescriptionText']",
-        "[id*='jobDescription']",
-        ".jobsearch-JobComponent-description",
-    ]
+async def _get_panel_description(page) -> str:
+    """Read description from the right-side panel after a card click."""
     for selector in PANEL_SELECTORS:
         try:
             await page.wait_for_selector(selector, timeout=6000)
             el = await page.query_selector(selector)
             if el:
                 raw = (await el.inner_text()).strip()
-                if len(raw) > 100:
+                if len(raw) > 100 and not _is_blocked(raw):
                     return _clean_text(raw)
         except PWTimeout:
             continue
     return ""
 
 
+async def _get_posted_date(page) -> str:
+    for selector in ["[data-testid='myJobsStateDate']", "[class*='date']", "[class*='posted']"]:
+        el = await page.query_selector(selector)
+        if el:
+            txt = (await el.inner_text()).strip()
+            if txt:
+                return txt[:50]
+    return ""
+
+
+async def _collect_card_metadata(page) -> List[Dict]:
+    """
+    Extract all card metadata as plain JSON via JS so we have stable
+    data-jk keys to re-locate cards by after DOM mutations from clicks.
+    """
+    return await page.evaluate("""
+        () => {
+            const cards = Array.from(
+                document.querySelectorAll('.job_seen_beacon, td.resultContent')
+            );
+            return cards.map(card => {
+                const titleEl = card.querySelector('[class*="jobTitle"] a, h2 a[data-jk], a[data-jk]');
+                const compEl  = card.querySelector('[data-testid="company-name"], .companyName, [class*="companyName"]');
+                const locEl   = card.querySelector('[data-testid="text-location"], .companyLocation, [class*="companyLocation"]');
+                const salEl   = card.querySelector('[class*="salary"], [data-testid*="salary"]');
+                const jk      = titleEl ? (titleEl.getAttribute('data-jk') || '') : '';
+                const href    = titleEl ? (titleEl.getAttribute('href') || '') : '';
+                return {
+                    jk:      jk,
+                    title:   titleEl ? titleEl.innerText.trim() : null,
+                    href:    href,
+                    company: compEl  ? compEl.innerText.trim()  : 'Unknown',
+                    loc:     locEl   ? locEl.innerText.trim()   : '',
+                    salary:  salEl   ? salEl.innerText.trim()   : '',
+                };
+            }).filter(c => c.title && c.jk);
+        }
+    """)
+
+
+async def _click_card_by_jk(page, jk: str) -> bool:
+    """
+    Re-locate the card by its stable data-jk attribute and click the title link.
+    Returns True if click succeeded.
+    """
+    try:
+        selector = f'a[data-jk="{jk}"]'
+        el = await page.query_selector(selector)
+        if not el:
+            logger.warning(f"Indeed: could not find card with jk={jk} for click")
+            return False
+        await el.click()
+        return True
+    except Exception as e:
+        logger.warning(f"Indeed: click error for jk={jk}: {e}")
+        return False
+
+
 async def _scrape_keyword_page(
     page,
     url: str,
     seen_urls: set,
-) -> List[Dict]:
-    """Scrape one search results page, clicking each card to get the inline description."""
-    jobs = []
-
+) -> Optional[List[Dict]]:
+    """
+    Returns list of jobs scraped from one search results page.
+    Returns None if the page is blocked (caller should stop this keyword).
+    """
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=25000)
         await asyncio.sleep(random.uniform(3.0, 5.0))
     except PWTimeout:
         logger.warning(f"Indeed: timeout loading {url}")
-        return jobs
+        return []
 
     body = await page.evaluate("() => document.body?.innerText || ''")
     if _is_blocked(body):
         logger.warning(f"Indeed: blocked at {url}")
-        return jobs  # empty list signals blocked
+        return None
 
-    # Collect card metadata using JS evaluation to avoid stale handles later
-    card_data = await page.evaluate("""
-        () => {
-            const cards = Array.from(document.querySelectorAll('.job_seen_beacon, td.resultContent'));
-            return cards.map(card => {
-                const titleEl = card.querySelector('[class*="jobTitle"] a, h2 a[data-jk]');
-                const compEl  = card.querySelector('[data-testid="company-name"], .companyName, [class*="companyName"]');
-                const locEl   = card.querySelector('[data-testid="text-location"], .companyLocation, [class*="companyLocation"]');
-                const salEl   = card.querySelector('[class*="salary"], [data-testid*="salary"]');
-                return {
-                    title:   titleEl ? titleEl.innerText.trim() : null,
-                    href:    titleEl ? (titleEl.getAttribute('href') || '') : '',
-                    company: compEl  ? compEl.innerText.trim()  : 'Unknown',
-                    loc:     locEl   ? locEl.innerText.trim()   : '',
-                    salary:  salEl   ? salEl.innerText.trim()   : '',
-                };
-            });
-        }
-    """)
+    try:
+        await page.wait_for_selector(
+            '.job_seen_beacon, td.resultContent', timeout=12000
+        )
+    except PWTimeout:
+        logger.info(f"Indeed: no cards at {url}")
+        return []
 
-    logger.info(f"Indeed: {len(card_data)} cards found on {url}")
+    cards_meta = await _collect_card_metadata(page)
+    logger.info(f"Indeed: {len(cards_meta)} cards with jk on {url}")
 
-    for i, meta in enumerate(card_data):
-        title = meta.get("title") or ""
-        href  = meta.get("href") or ""
+    jobs = []
+    for meta in cards_meta:
+        jk      = meta.get("jk", "")
+        title   = meta.get("title") or ""
+        href    = meta.get("href") or ""
+        company = meta.get("company", "Unknown")
+        loc     = meta.get("loc", "")
+        salary  = meta.get("salary", "")
 
-        if not title or title.lower() in {"job title", ""}:
-            continue
-        if not href or href.lower().startswith("javascript"):
+        if not title or not jk:
             continue
 
         job_url = href if href.startswith("http") else BASE_URL + href
@@ -138,54 +192,27 @@ async def _scrape_keyword_page(
             continue
         seen_urls.add(job_url)
 
-        company  = meta.get("company", "Unknown")
-        location = meta.get("loc", "")
-        salary   = meta.get("salary", "")
-
-        # Click the card by index to load the inline panel - re-query each time
-        # to avoid stale ElementHandle references after previous clicks
+        # Click by stable jk attribute - immune to DOM index shifts
+        clicked = await _click_card_by_jk(page, jk)
         description = ""
         posted_date = ""
-        try:
-            # Re-navigate to the listing page to ensure fresh DOM state
-            # (clicking card may have triggered a soft navigation)
-            current_url = page.url
-            if not current_url.startswith(url.split("?")[0]):
-                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                await asyncio.sleep(random.uniform(2.0, 3.0))
 
-            fresh_cards = await page.query_selector_all(
-                '.job_seen_beacon, td.resultContent'
-            )
-            if i >= len(fresh_cards):
-                logger.warning(f"Indeed: card index {i} out of range after re-query")
-            else:
-                title_el = await fresh_cards[i].query_selector(
-                    '[class*="jobTitle"] a, h2 a[data-jk]'
-                )
-                if title_el:
-                    await title_el.click()
-                    await asyncio.sleep(random.uniform(2.0, 3.5))
-                    description = await _get_inline_description(page)
-
-                    date_el = await page.query_selector(
-                        '[class*="date"], [data-testid*="date"], [class*="posted"]'
-                    )
-                    if date_el:
-                        posted_date = (await date_el.inner_text()).strip()[:50]
-
-        except Exception as e:
-            logger.warning(f"Indeed: click/panel error for card {i} '{title}': {e}")
+        if clicked:
+            await asyncio.sleep(random.uniform(2.0, 3.5))
+            description = await _get_panel_description(page)
+            posted_date = await _get_posted_date(page)
+        else:
+            logger.warning(f"Indeed: skipping description for '{title}' (click failed)")
 
         if not salary and description:
             salary = _extract_salary(description)
         if description:
-            location = _extract_location(description, fallback=location)
+            loc = _extract_location(description, fallback=loc)
 
         jobs.append({
             "job_title":       title,
             "company":         company,
-            "location":        location,
+            "location":        loc,
             "salary":          salary,
             "application_url": job_url,
             "description":     description,
@@ -228,7 +255,6 @@ async def scrape_indeed(
             )
             page = await context.new_page()
 
-            keyword_blocked = False
             for page_num in range(max_pages):
                 offset = page_num * 10
                 url = _build_search_url(keyword, location, offset)
@@ -236,25 +262,19 @@ async def scrape_indeed(
 
                 page_jobs = await _scrape_keyword_page(page, url, seen_urls)
 
-                if page_jobs == [] and page_num == 0:
-                    # Empty on first page likely means blocked or no results
-                    keyword_blocked = True
+                if page_jobs is None:
+                    logger.warning(f"Indeed: '{keyword}' blocked - stopping keyword")
                     break
 
                 all_jobs.extend(page_jobs)
                 logger.info(f"Indeed: '{keyword}' page {page_num + 1}: {len(page_jobs)} jobs, total={len(all_jobs)}")
 
                 if len(page_jobs) == 0:
-                    break  # no more pages
+                    break
 
-                # Longer delay between pages to avoid rate limiting
                 await asyncio.sleep(random.uniform(6.0, 10.0))
 
-            if keyword_blocked:
-                logger.warning(f"Indeed: '{keyword}' blocked - skipping remaining pages")
-
             await browser.close()
-            # Delay between keywords
             await asyncio.sleep(random.uniform(5.0, 9.0))
 
     logger.info(f"Indeed: done, {len(all_jobs)} total jobs")
