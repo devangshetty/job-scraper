@@ -54,11 +54,9 @@ def _build_search_url(keyword: str, location: str, offset: int = 0) -> str:
 
 
 def _canonical_url(href: str) -> str:
-    """Strip all tracking params, keep only /viewjob?jk=<value>."""
     m = re.search(r'[?&]jk=([a-f0-9]+)', href)
     if m:
         return f"{BASE_URL}/viewjob?jk={m.group(1)}"
-    # fallback: strip everything after & to remove tracking noise
     base = href.split("&")[0]
     return base if base.startswith("http") else BASE_URL + base
 
@@ -105,41 +103,50 @@ async def _get_posted_date(page) -> str:
 
 
 async def _collect_card_metadata(page) -> List[Dict]:
-    return await page.evaluate("""
+    """
+    Extract card metadata as JSON. Deduplicates by jk so each job
+    appears once regardless of how many DOM containers Indeed uses.
+    """
+    raw = await page.evaluate("""
         () => {
             const cards = Array.from(
                 document.querySelectorAll('.job_seen_beacon, td.resultContent')
             );
-            return cards.map(card => {
+            const seen = new Set();
+            const results = [];
+            for (const card of cards) {
                 const titleEl = card.querySelector('[class*="jobTitle"] a, h2 a[data-jk], a[data-jk]');
-                const compEl  = card.querySelector('[data-testid="company-name"], .companyName, [class*="companyName"]');
-                const locEl   = card.querySelector('[data-testid="text-location"], .companyLocation, [class*="companyLocation"]');
-                const salEl   = card.querySelector('[class*="salary"], [data-testid*="salary"]');
-                const jk      = titleEl ? (titleEl.getAttribute('data-jk') || '') : '';
-                const href    = titleEl ? (titleEl.getAttribute('href') || '') : '';
-                return {
-                    jk:      jk,
-                    title:   titleEl ? titleEl.innerText.trim() : null,
-                    href:    href,
-                    company: compEl  ? compEl.innerText.trim()  : 'Unknown',
-                    loc:     locEl   ? locEl.innerText.trim()   : '',
-                    salary:  salEl   ? salEl.innerText.trim()   : '',
-                };
-            }).filter(c => c.title && c.jk);
+                if (!titleEl) continue;
+                const jk = titleEl.getAttribute('data-jk') || '';
+                if (!jk || seen.has(jk)) continue;
+                seen.add(jk);
+                const compEl = card.querySelector('[data-testid="company-name"], .companyName, [class*="companyName"]');
+                const locEl  = card.querySelector('[data-testid="text-location"], .companyLocation, [class*="companyLocation"]');
+                const salEl  = card.querySelector('[class*="salary"], [data-testid*="salary"]');
+                results.push({
+                    jk,
+                    title:   titleEl.innerText.trim(),
+                    href:    titleEl.getAttribute('href') || '',
+                    company: compEl ? compEl.innerText.trim() : 'Unknown',
+                    loc:     locEl  ? locEl.innerText.trim()  : '',
+                    salary:  salEl  ? salEl.innerText.trim()  : '',
+                });
+            }
+            return results;
         }
     """)
+    return raw
 
 
-async def _click_card_by_jk(page, jk: str) -> bool:
+async def _wait_for_cards(page) -> bool:
+    """Wait for the card list to be present and stable after a click."""
     try:
-        el = await page.query_selector(f'a[data-jk="{jk}"]')
-        if not el:
-            logger.warning(f"Indeed: could not find card with jk={jk}")
-            return False
-        await el.click()
+        await page.wait_for_selector(
+            '.job_seen_beacon, td.resultContent', timeout=8000
+        )
+        await asyncio.sleep(0.8)
         return True
-    except Exception as e:
-        logger.warning(f"Indeed: click error for jk={jk}: {e}")
+    except PWTimeout:
         return False
 
 
@@ -148,11 +155,6 @@ async def _scrape_keyword_page(
     url: str,
     seen_jks: set,
 ) -> Optional[List[Dict]]:
-    """
-    Returns list of jobs from one search results page.
-    Returns None if the page is blocked.
-    seen_jks deduplicates by Indeed's stable job key across all keywords and pages.
-    """
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=25000)
         await asyncio.sleep(random.uniform(3.0, 5.0))
@@ -186,8 +188,6 @@ async def _scrape_keyword_page(
         if not title or not jk:
             continue
 
-        # Deduplicate by jk - the same job appears under multiple keywords
-        # with different tracking URLs so URL-based dedup is unreliable
         if jk in seen_jks:
             logger.info(f"Indeed: skipping duplicate jk={jk} '{title}' @ {company}")
             continue
@@ -195,16 +195,23 @@ async def _scrape_keyword_page(
 
         job_url = _canonical_url(href)
 
-        clicked = await _click_card_by_jk(page, jk)
-        description = ""
-        posted_date = ""
-
-        if clicked:
-            await asyncio.sleep(random.uniform(2.0, 3.5))
-            description = await _get_panel_description(page)
-            posted_date = await _get_posted_date(page)
-        else:
-            logger.warning(f"Indeed: skipping description for '{title}' (click failed)")
+        # Click the card by jk, then wait for the card list to re-render
+        # before reading the panel. Indeed replaces the DOM after each click.
+        try:
+            el = await page.query_selector(f'a[data-jk="{jk}"]')
+            if not el:
+                logger.warning(f"Indeed: card jk={jk} not found before click")
+                description, posted_date = "", ""
+            else:
+                await el.click()
+                # Wait for panel to populate AND cards to re-render
+                await asyncio.sleep(random.uniform(2.5, 4.0))
+                await _wait_for_cards(page)
+                description = await _get_panel_description(page)
+                posted_date = await _get_posted_date(page)
+        except Exception as e:
+            logger.warning(f"Indeed: error clicking jk={jk}: {e}")
+            description, posted_date = "", ""
 
         if not salary and description:
             salary = _extract_salary(description)
@@ -222,7 +229,7 @@ async def _scrape_keyword_page(
             "source":          "indeed",
         })
         logger.info(f"Indeed: '{title}' @ {company} desc_len={len(description)}")
-        await asyncio.sleep(random.uniform(1.5, 3.0))
+        await asyncio.sleep(random.uniform(1.5, 2.5))
 
     return jobs
 
@@ -233,7 +240,7 @@ async def scrape_indeed(
     max_pages: int = 3,
 ) -> List[Dict]:
     all_jobs: List[Dict] = []
-    seen_jks: set        = set()  # shared across all keywords and pages
+    seen_jks: set        = set()
 
     async with async_playwright() as pw:
         for keyword in keywords:
