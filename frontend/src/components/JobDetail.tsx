@@ -10,6 +10,15 @@ function parseSkills(raw: string | string[]): string[] {
   catch { return []; }
 }
 
+function applyButtonLabel(source: string | null | undefined): string {
+  switch (source) {
+    case 'iworkforsa': return 'Apply on iWorkForSA';
+    case 'indeed':     return 'Apply on Indeed';
+    case 'seek':       return 'Apply on Seek';
+    default:           return 'Apply Now';
+  }
+}
+
 export default function JobDetail() {
   const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -44,7 +53,10 @@ export default function JobDetail() {
                      job.match_score >= 0.7 ? 'text-green-600' :
                      job.match_score >= 0.5 ? 'text-yellow-600' : 'text-red-600';
 
-  const applyLabel = job.source === 'iworkforsa' ? 'Apply on iWorkForSA' : 'Apply on Seek';
+  const sourceLabel =
+    job.source === 'iworkforsa' ? 'iWorkForSA' :
+    job.source === 'indeed'     ? 'Indeed' :
+    job.source === 'seek'       ? 'Seek' : job.source ?? '';
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -59,7 +71,7 @@ export default function JobDetail() {
               <h1 className="text-xl font-bold text-gray-800">{job.job_title}</h1>
               {job.source && (
                 <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
-                  {job.source === 'iworkforsa' ? 'iWorkForSA' : 'Seek'}
+                  {sourceLabel}
                 </span>
               )}
             </div>
@@ -123,7 +135,7 @@ export default function JobDetail() {
           </button>
           <a href={job.application_url} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
-            <ExternalLink size={15} /> {applyLabel}
+            <ExternalLink size={15} /> {applyButtonLabel(job.source)}
           </a>
         </div>
       </div>
