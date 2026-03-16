@@ -1,9 +1,6 @@
-from sqlalchemy import Column, Integer, Text, Float, Boolean, DateTime
+from sqlalchemy import Column, Integer, Float, Boolean, Text, DateTime
 from sqlalchemy.sql import func
 from database import Base
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
 
 
 class Job(Base):
@@ -14,72 +11,21 @@ class Job(Base):
     company         = Column(Text, nullable=False)
     location        = Column(Text)
     salary          = Column(Text)
-    description     = Column(Text, nullable=False)
+    description     = Column(Text)
     posted_date     = Column(Text)
-    application_url = Column(Text, unique=True, index=True)
+    application_url = Column(Text, unique=True)
     scraped_at      = Column(DateTime, server_default=func.now())
-    match_score     = Column(Float)
-    matched_skills  = Column(Text)
-    missing_skills  = Column(Text)
+    match_score     = Column(Float, nullable=True)
+    matched_skills  = Column(Text)   # JSON array string
+    missing_skills  = Column(Text)   # JSON array string
     is_applied      = Column(Boolean, default=False)
-    applied_date    = Column(DateTime)
     notes           = Column(Text)
-    source          = Column(Text)
+    source          = Column(Text)   # 'seek' | 'iworkforsa' | 'indeed'
 
 
 class Setting(Base):
     __tablename__ = "settings"
 
-    id    = Column(Integer, primary_key=True)
+    id    = Column(Integer, primary_key=True, index=True)
     key   = Column(Text, unique=True, nullable=False)
     value = Column(Text)
-
-
-class JobBase(BaseModel):
-    job_title:       str
-    company:         str
-    location:        Optional[str] = None
-    salary:          Optional[str] = None
-    description:     str
-    posted_date:     Optional[str] = None
-    application_url: str
-    source:          Optional[str] = None
-
-
-class JobOut(JobBase):
-    id:             int
-    scraped_at:     Optional[datetime]
-    match_score:    Optional[float]
-    matched_skills: Optional[List[str]]
-    missing_skills: Optional[List[str]]
-    is_applied:     bool
-    applied_date:   Optional[datetime]
-    notes:          Optional[str]
-    source:         Optional[str]
-
-    class Config:
-        from_attributes = True
-
-
-class JobUpdate(BaseModel):
-    is_applied: Optional[bool] = None
-    notes:      Optional[str]  = None
-
-
-class SeekScrapeRequest(BaseModel):
-    keywords:  List[str] = ["Software Engineer", "Full Stack Developer", "Java Developer", "React Developer"]
-    location:  str       = "Adelaide"
-    max_pages: int       = 3
-
-
-class ScrapeResponse(BaseModel):
-    scraped: int
-    scored:  int
-    message: str
-
-
-class StatsOut(BaseModel):
-    total_jobs:    int
-    avg_score:     float
-    applied_count: int
-    high_match:    int

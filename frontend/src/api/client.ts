@@ -4,6 +4,16 @@ const api = axios.create({
   baseURL: 'http://localhost:8000',
 })
 
+// Axios error message extractor
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    const detail = err?.response?.data?.detail
+    if (detail) err.message = typeof detail === 'string' ? detail : JSON.stringify(detail)
+    return Promise.reject(err)
+  }
+)
+
 // --- Jobs ---
 export const fetchJobs = (params: Record<string, unknown>) =>
   api.get('/api/jobs', { params }).then((r) => r.data)
@@ -41,6 +51,21 @@ export const scrapeIWorkForSA = () =>
 
 export const fetchScrapeStatus = () =>
   api.get('/api/scrape/status').then((r) => r.data)
+
+// --- Resume ---
+export const uploadResume = (file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/api/resume/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((r) => r.data)
+}
+
+export const summariseResume = () =>
+  api.post('/api/resume/summarise').then((r) => r.data)
+
+export const fetchResumeStatus = () =>
+  api.get('/api/resume/status').then((r) => r.data)
 
 // --- LLM ---
 export const runGapAnalysis = (jobId: number) =>
