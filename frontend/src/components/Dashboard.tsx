@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   fetchStats,
   fetchJobCountBySource,
@@ -115,6 +116,7 @@ function ScrapeCard({
 
 export default function Dashboard() {
   const qc                     = useQueryClient();
+  const navigate               = useNavigate();
   const { data: stats }        = useQuery({ queryKey: ['stats'], queryFn: fetchStats });
   const { data: scrapeStatus } = useQuery({
     queryKey: ['scrapeStatus'],
@@ -170,30 +172,58 @@ export default function Dashboard() {
     });
   }
 
-  const clearSeekM    = makeClearMutation('seek');
-  const clearGovM     = makeClearMutation('iworkforsa');
-  const clearIndeedM  = makeClearMutation('indeed');
-  const rescoreSeekM  = makeRescoreMutation('seek');
-  const rescoreGovM   = makeRescoreMutation('iworkforsa');
+  const clearSeekM     = makeClearMutation('seek');
+  const clearGovM      = makeClearMutation('iworkforsa');
+  const clearIndeedM   = makeClearMutation('indeed');
+  const rescoreSeekM   = makeRescoreMutation('seek');
+  const rescoreGovM    = makeRescoreMutation('iworkforsa');
   const rescoreIndeedM = makeRescoreMutation('indeed');
 
   const tiles = [
-    { label: 'Total Jobs',  value: stats?.total_jobs    ?? 0,  icon: Briefcase,   color: 'bg-blue-50 text-blue-600' },
-    { label: 'Applied',     value: stats?.applied_count ?? 0,  icon: CheckCircle, color: 'bg-green-50 text-green-600' },
-    { label: 'High Match',  value: stats?.high_match    ?? 0,  icon: Star,        color: 'bg-yellow-50 text-yellow-600' },
-    { label: 'Avg Score',   value: stats ? `${(stats.avg_score * 100).toFixed(0)}%` : '\u2014', icon: TrendingUp, color: 'bg-purple-50 text-purple-600' },
+    {
+      label: 'Total Jobs',
+      value: stats?.total_jobs ?? 0,
+      icon: Briefcase,
+      color: 'bg-blue-50 text-blue-600',
+      href: '/jobs',
+    },
+    {
+      label: 'Applied',
+      value: stats?.applied_count ?? 0,
+      icon: CheckCircle,
+      color: 'bg-green-50 text-green-600',
+      href: '/jobs?applied=applied',
+    },
+    {
+      label: 'High Match',
+      value: stats?.high_match ?? 0,
+      icon: Star,
+      color: 'bg-yellow-50 text-yellow-600',
+      href: '/jobs?min=0.7&sort=match_score',
+    },
+    {
+      label: 'Avg Score',
+      value: stats ? `${(stats.avg_score * 100).toFixed(0)}%` : '\u2014',
+      icon: TrendingUp,
+      color: 'bg-purple-50 text-purple-600',
+      href: '/jobs?sort=match_score',
+    },
   ];
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-800 mb-6">Dashboard</h1>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        {tiles.map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className={`rounded-xl p-4 ${color} flex flex-col gap-2`}>
+        {tiles.map(({ label, value, icon: Icon, color, href }) => (
+          <button
+            key={label}
+            onClick={() => navigate(href)}
+            className={`rounded-xl p-4 ${color} flex flex-col gap-2 text-left hover:opacity-80 transition cursor-pointer w-full`}
+          >
             <Icon size={20} />
             <p className="text-2xl font-bold">{value}</p>
             <p className="text-sm font-medium">{label}</p>
-          </div>
+          </button>
         ))}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -224,7 +254,7 @@ export default function Dashboard() {
         <ScrapeCard
           title="Indeed"
           source="indeed"
-          description="Scrapes Software Engineer, Full Stack, Java and React roles in Adelaide SA. Takes 20-30 min."
+          description="Scrapes Software Engineer, Full Stack, Java and React roles in Adelaide SA. Metadata only."
           isRunning={scrapeStatus?.indeed?.running ?? false}
           lastResult={scrapeStatus?.indeed?.last_result ?? {}}
           onRun={() => indeedM.mutate()}
