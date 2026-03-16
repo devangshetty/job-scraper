@@ -11,7 +11,7 @@ import {
   rescoreJobsBySource,
   fetchScrapeStatus,
 } from '../api/client';
-import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader, Trash2, RefreshCw } from 'lucide-react';
+import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader, Trash2, RefreshCw, ChevronRight } from 'lucide-react';
 
 function ScrapeCard({
   title,
@@ -22,6 +22,7 @@ function ScrapeCard({
   onRun,
   onClear,
   onRescore,
+  onViewJobs,
   clearing,
   rescoring,
 }: {
@@ -33,6 +34,7 @@ function ScrapeCard({
   onRun:       () => void;
   onClear:     () => void;
   onRescore:   () => void;
+  onViewJobs:  () => void;
   clearing:    boolean;
   rescoring:   boolean;
 }) {
@@ -57,11 +59,20 @@ function ScrapeCard({
   return (
     <div className="bg-white rounded-xl border p-5">
       <div className="flex items-start justify-between mb-1">
-        <h2 className="font-semibold text-gray-700">{title}</h2>
+        <button
+          onClick={onViewJobs}
+          className="font-semibold text-gray-700 hover:text-blue-600 flex items-center gap-1 transition group"
+        >
+          {title}
+          <ChevronRight size={14} className="opacity-0 group-hover:opacity-100 transition" />
+        </button>
         {jobCount !== undefined && (
-          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+          <button
+            onClick={onViewJobs}
+            className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 transition"
+          >
             {jobCount} job{jobCount !== 1 ? 's' : ''}
-          </span>
+          </button>
         )}
       </div>
       <p className="text-sm text-gray-500 mb-4">{description}</p>
@@ -236,6 +247,7 @@ export default function Dashboard() {
           onRun={() => seekM.mutate()}
           onClear={() => clearSeekM.mutate()}
           onRescore={() => rescoreSeekM.mutate()}
+          onViewJobs={() => navigate('/jobs?source=seek')}
           clearing={clearSeekM.isPending}
           rescoring={rescoreSeekM.isPending}
         />
@@ -248,6 +260,7 @@ export default function Dashboard() {
           onRun={() => govM.mutate()}
           onClear={() => clearGovM.mutate()}
           onRescore={() => rescoreGovM.mutate()}
+          onViewJobs={() => navigate('/jobs?source=iworkforsa')}
           clearing={clearGovM.isPending}
           rescoring={rescoreGovM.isPending}
         />
@@ -260,6 +273,7 @@ export default function Dashboard() {
           onRun={() => indeedM.mutate()}
           onClear={() => clearIndeedM.mutate()}
           onRescore={() => rescoreIndeedM.mutate()}
+          onViewJobs={() => navigate('/jobs?source=indeed')}
           clearing={clearIndeedM.isPending}
           rescoring={rescoreIndeedM.isPending}
         />
