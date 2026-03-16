@@ -53,6 +53,16 @@ def _build_search_url(keyword: str, location: str, offset: int = 0) -> str:
     return url
 
 
+def _canonical_url(href: str) -> str:
+    """Strip all tracking params, keep only /viewjob?jk=<value>."""
+    m = re.search(r'[?&]jk=([a-f0-9]+)', href)
+    if m:
+        return f"{BASE_URL}/viewjob?jk={m.group(1)}"
+    # fallback: strip everything after & to remove tracking noise
+    base = href.split("&")[0]
+    return base if base.startswith("http") else BASE_URL + base
+
+
 def _clean_text(raw: str) -> str:
     return re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", raw)).strip()
 
@@ -71,7 +81,6 @@ def _extract_location(text: str, fallback: str = "") -> str:
 
 
 async def _get_panel_description(page) -> str:
-    """Read description from the right-side panel after a card click."""
     for selector in PANEL_SELECTORS:
         try:
             await page.wait_for_selector(selector, timeout=6000)
@@ -96,10 +105,6 @@ async def _get_posted_date(page) -> str:
 
 
 async def _collect_card_metadata(page) -> List[Dict]:
-    """
-    Extract all card metadata as plain JSON via JS so we have stable
-    data-jk keys to re-locate cards by after DOM mutations from clicks.
-    """
     return await page.evaluate("""
         () => {
             const cards = Array.from(
@@ -126,15 +131,10 @@ async def _collect_card_metadata(page) -> List[Dict]:
 
 
 async def _click_card_by_jk(page, jk: str) -> bool:
-    """
-    Re-locate the card by its stable data-jk attribute and click the title link.
-    Returns True if click succeeded.
-    """
     try:
-        selector = f'a[data-jk="{jk}"]'
-        el = await page.query_selector(selector)
+        el = await page.query_selector(f'a[data-jk="{jk}"]')
         if not el:
-            logger.warning(f"Indeed: could not find card with jk={jk} for click")
+            logger.warning(f"Indeed: could not find card with jk={jk}")
             return False
         await el.click()
         return True
@@ -146,11 +146,12 @@ async def _click_card_by_jk(page, jk: str) -> bool:
 async def _scrape_keyword_page(
     page,
     url: str,
-    seen_urls: set,
+    seen_jks: set,
 ) -> Optional[List[Dict]]:
     """
-    Returns list of jobs scraped from one search results page.
-    Returns None if the page is blocked (caller should stop this keyword).
+    Returns list of jobs from one search results page.
+    Returns None if the page is blocked.
+    seen_jks deduplicates by Indeed's stable job key across all keywords and pages.
     """
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=25000)
@@ -165,9 +166,7 @@ async def _scrape_keyword_page(
         return None
 
     try:
-        await page.wait_for_selector(
-            '.job_seen_beacon, td.resultContent', timeout=12000
-        )
+        await page.wait_for_selector('.job_seen_beacon, td.resultContent', timeout=12000)
     except PWTimeout:
         logger.info(f"Indeed: no cards at {url}")
         return []
@@ -187,12 +186,15 @@ async def _scrape_keyword_page(
         if not title or not jk:
             continue
 
-        job_url = href if href.startswith("http") else BASE_URL + href
-        if job_url in seen_urls:
+        # Deduplicate by jk - the same job appears under multiple keywords
+        # with different tracking URLs so URL-based dedup is unreliable
+        if jk in seen_jks:
+            logger.info(f"Indeed: skipping duplicate jk={jk} '{title}' @ {company}")
             continue
-        seen_urls.add(job_url)
+        seen_jks.add(jk)
 
-        # Click by stable jk attribute - immune to DOM index shifts
+        job_url = _canonical_url(href)
+
         clicked = await _click_card_by_jk(page, jk)
         description = ""
         posted_date = ""
@@ -230,12 +232,11 @@ async def scrape_indeed(
     location:  str = "Adelaide SA",
     max_pages: int = 3,
 ) -> List[Dict]:
-    all_jobs:  List[Dict] = []
-    seen_urls: set        = set()
+    all_jobs: List[Dict] = []
+    seen_jks: set        = set()  # shared across all keywords and pages
 
     async with async_playwright() as pw:
         for keyword in keywords:
-            # Fresh browser context per keyword to reset fingerprint/cookies
             browser = await pw.chromium.launch(
                 headless=True,
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
@@ -260,7 +261,7 @@ async def scrape_indeed(
                 url = _build_search_url(keyword, location, offset)
                 logger.info(f"Indeed: scraping '{keyword}' page {page_num + 1}: {url}")
 
-                page_jobs = await _scrape_keyword_page(page, url, seen_urls)
+                page_jobs = await _scrape_keyword_page(page, url, seen_jks)
 
                 if page_jobs is None:
                     logger.warning(f"Indeed: '{keyword}' blocked - stopping keyword")
