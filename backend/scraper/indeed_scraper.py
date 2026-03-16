@@ -134,22 +134,35 @@ async def _collect_card_metadata(page) -> List[Dict]:
     """)
 
 
-async def _load_search_page(page, url: str) -> Optional[str]:
+async def _restore_search_page(page, url: str) -> bool:
     """
-    Navigate to a search URL and return its body text.
-    Returns None if blocked or timeout.
+    Use browser back to restore the search results page from cache.
+    Falls back to a fresh goto only if back navigation fails.
+    Returns False if the page is now blocked.
     """
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
-        await asyncio.sleep(random.uniform(3.0, 5.0))
+        await page.go_back(wait_until="domcontentloaded", timeout=15000)
+        await asyncio.sleep(random.uniform(1.5, 2.5))
     except PWTimeout:
-        logger.warning(f"Indeed: timeout loading {url}")
-        return None
+        logger.warning("Indeed: go_back timed out, doing fresh goto")
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(random.uniform(3.0, 5.0))
+        except PWTimeout:
+            return False
+
     body = await page.evaluate("() => document.body?.innerText || ''")
     if _is_blocked(body):
-        logger.warning(f"Indeed: blocked at {url}")
-        return None
-    return body
+        logger.warning("Indeed: search page blocked after go_back")
+        return False
+
+    try:
+        await page.wait_for_selector('.job_seen_beacon, td.resultContent', timeout=10000)
+    except PWTimeout:
+        logger.warning("Indeed: cards not present after go_back")
+        return False
+
+    return True
 
 
 async def _scrape_keyword_page(
@@ -157,19 +170,17 @@ async def _scrape_keyword_page(
     url: str,
     seen_jks: set,
 ) -> Optional[List[Dict]]:
-    """
-    For each card on a search results page:
-    1. Load the search page fresh
-    2. Click the card by jk (DOM is guaranteed fresh)
-    3. Read the inline panel description
-    4. Repeat for next card
+    # Initial load
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        await asyncio.sleep(random.uniform(3.0, 5.0))
+    except PWTimeout:
+        logger.warning(f"Indeed: timeout loading {url}")
+        return []
 
-    Reloading before each click is the only reliable way to guarantee
-    data-jk links are present - Indeed replaces the card list DOM after
-    every click and the re-render timing is unpredictable.
-    """
-    body = await _load_search_page(page, url)
-    if body is None:
+    body = await page.evaluate("() => document.body?.innerText || ''")
+    if _is_blocked(body):
+        logger.warning(f"Indeed: blocked at {url}")
         return None
 
     try:
@@ -178,11 +189,11 @@ async def _scrape_keyword_page(
         logger.info(f"Indeed: no cards at {url}")
         return []
 
-    # Collect all metadata from the clean initial load
+    # Snapshot all metadata before any clicks mutate the DOM
     cards_meta = await _collect_card_metadata(page)
     logger.info(f"Indeed: {len(cards_meta)} cards with jk on {url}")
 
-    # Filter out already-seen jks before doing any clicks
+    # Filter duplicates before clicking anything
     new_cards = []
     for meta in cards_meta:
         jk = meta.get("jk", "")
@@ -195,7 +206,7 @@ async def _scrape_keyword_page(
         new_cards.append(meta)
 
     jobs = []
-    for meta in new_cards:
+    for i, meta in enumerate(new_cards):
         jk      = meta["jk"]
         title   = meta["title"]
         company = meta.get("company", "Unknown")
@@ -204,29 +215,24 @@ async def _scrape_keyword_page(
         href    = meta.get("href", "")
         job_url = _canonical_url(href)
 
-        # Reload the search page to get a guaranteed fresh DOM with all data-jk links
-        body = await _load_search_page(page, url)
-        if body is None:
-            logger.warning(f"Indeed: blocked on reload for '{title}' - stopping page")
-            break
-
-        try:
-            await page.wait_for_selector('.job_seen_beacon, td.resultContent', timeout=10000)
-        except PWTimeout:
-            logger.warning(f"Indeed: cards not ready on reload for '{title}'")
-            description, posted_date = "", ""
-            jobs.append(_make_job(title, company, loc, salary, job_url, "", ""))
-            continue
+        # For cards after the first, use go_back() to restore the search page
+        # so data-jk links are present in the DOM again
+        if i > 0:
+            ok = await _restore_search_page(page, url)
+            if not ok:
+                logger.warning(f"Indeed: could not restore search page for '{title}' - stopping page")
+                break
 
         el = await page.query_selector(f'a[data-jk="{jk}"]')
         if not el:
-            logger.warning(f"Indeed: jk={jk} not found after reload for '{title}'")
-            description, posted_date = "", ""
-        else:
-            await el.click()
-            await asyncio.sleep(random.uniform(2.5, 4.0))
-            description = await _get_panel_description(page)
-            posted_date = await _get_posted_date(page)
+            logger.warning(f"Indeed: jk={jk} not in DOM for '{title}' after restore")
+            jobs.append(_make_job(title, company, loc, salary, job_url, "", ""))
+            continue
+
+        await el.click()
+        await asyncio.sleep(random.uniform(2.5, 4.0))
+        description = await _get_panel_description(page)
+        posted_date = await _get_posted_date(page)
 
         if not salary and description:
             salary = _extract_salary(description)
