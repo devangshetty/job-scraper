@@ -1,6 +1,5 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchJobs } from '../api/client';
 import type { Job } from '../types';
 import { MapPin, Building2, DollarSign, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -28,13 +27,34 @@ function ScoreBadge({ score }: { score: number | null }) {
 }
 
 export default function JobList() {
-  const navigate    = useNavigate();
-  const [source,    setSource]    = useState('all');
-  const [minScore,  setMinScore]  = useState(0);
-  const [search,    setSearch]    = useState('');
-  const [applied,   setApplied]   = useState<string>('all');
-  const [sortBy,    setSortBy]    = useState('match_score');
-  const [page,      setPage]      = useState(1);
+  const navigate             = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Read all state from URL params with sensible defaults
+  const source   = searchParams.get('source')   ?? 'all';
+  const search   = searchParams.get('search')   ?? '';
+  const applied  = searchParams.get('applied')  ?? 'all';
+  const sortBy   = searchParams.get('sort')     ?? 'match_score';
+  const minScore = parseFloat(searchParams.get('min') ?? '0');
+  const page     = parseInt(searchParams.get('page') ?? '1', 10);
+
+  function setParam(updates: Record<string, string>) {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      Object.entries(updates).forEach(([k, v]) => {
+        if (v === '' || v === 'all' || v === '0' || v === '1' && k === 'page' || v === 'match_score' && k === 'sort') {
+          next.delete(k);
+        } else {
+          next.set(k, v);
+        }
+      });
+      return next;
+    }, { replace: false });
+  }
+
+  function switchSource(key: string) {
+    setParam({ source: key, page: '1' });
+  }
 
   const appliedFilter = applied === 'applied' ? true : applied === 'not_applied' ? false : undefined;
 
@@ -53,11 +73,6 @@ export default function JobList() {
   });
 
   const totalPages = data ? Math.ceil(data.total / 20) : 1;
-
-  function switchSource(key: string) {
-    setSource(key);
-    setPage(1);
-  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -84,15 +99,15 @@ export default function JobList() {
           type="text"
           placeholder="Search title or company..."
           value={search}
-          onChange={e => { setSearch(e.target.value); setPage(1); }}
+          onChange={e => setParam({ search: e.target.value, page: '1' })}
           className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-blue-400"
         />
-        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+        <select value={sortBy} onChange={e => setParam({ sort: e.target.value })}
           className="border rounded-lg px-3 py-2 text-sm focus:outline-none">
           <option value="match_score">Sort: Score</option>
           <option value="scraped_at">Sort: Date Scraped</option>
         </select>
-        <select value={applied} onChange={e => { setApplied(e.target.value); setPage(1); }}
+        <select value={applied} onChange={e => setParam({ applied: e.target.value, page: '1' })}
           className="border rounded-lg px-3 py-2 text-sm focus:outline-none">
           <option value="all">All Jobs</option>
           <option value="not_applied">Not Applied</option>
@@ -101,7 +116,7 @@ export default function JobList() {
         <div className="flex items-center gap-2 text-sm text-gray-600">
           <label>Min Score:</label>
           <input type="range" min={0} max={0.9} step={0.1} value={minScore}
-            onChange={e => { setMinScore(parseFloat(e.target.value)); setPage(1); }}
+            onChange={e => setParam({ min: e.target.value, page: '1' })}
             className="w-24" />
           <span>{Math.round(minScore * 100)}%</span>
         </div>
@@ -120,7 +135,8 @@ export default function JobList() {
               job.source === 'indeed'     ? 'Indeed' :
               job.source === 'seek'       ? 'Seek' : job.source ?? '';
             return (
-              <div key={job.id} onClick={() => navigate(`/jobs/${job.id}`)}
+              <div key={job.id}
+                onClick={() => navigate(`/jobs/${job.id}`)}
                 className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition">
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0 pr-3">
@@ -164,12 +180,12 @@ export default function JobList() {
 
       {totalPages > 1 && (
         <div className="flex justify-center items-center gap-3 mt-6">
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+          <button onClick={() => setParam({ page: String(page - 1) })} disabled={page === 1}
             className="p-2 rounded border hover:bg-gray-50 disabled:opacity-40">
             <ChevronLeft size={16} />
           </button>
           <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
-          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+          <button onClick={() => setParam({ page: String(page + 1) })} disabled={page === totalPages}
             className="p-2 rounded border hover:bg-gray-50 disabled:opacity-40">
             <ChevronRight size={16} />
           </button>
