@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from fastapi import APIRouter, Depends, Query
@@ -5,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from database import SessionLocal
 from models import Job
+from matcher.tfidf_matcher import score_job
 from typing import Optional
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -68,6 +70,30 @@ def get_stats(db: Session = Depends(get_db)):
         "avg_score":    round(avg_score or 0, 3),
         "top_jobs":     top_jobs,
     }
+
+
+@router.post("/rescore/{source}")
+def rescore_by_source(source: str, db: Session = Depends(get_db)):
+    """Re-run TF-IDF scoring on all jobs from a source that have a non-empty description."""
+    if source not in ALLOWED_SOURCES:
+        return {"error": f"Unknown source '{source}'."}
+    jobs = (
+        db.query(Job)
+        .filter(Job.source == source)
+        .filter(Job.description != None)
+        .filter(Job.description != "")
+        .all()
+    )
+    rescored = 0
+    for job in jobs:
+        result = score_job(job.description)
+        job.match_score    = result["score"]
+        job.matched_skills = json.dumps(result["matched_skills"])
+        job.missing_skills = json.dumps(result["missing_skills"])
+        rescored += 1
+    db.commit()
+    logger.info(f"Rescored {rescored} jobs for source '{source}'")
+    return {"rescored": rescored, "source": source}
 
 
 @router.delete("/source/{source}")

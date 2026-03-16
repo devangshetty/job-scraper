@@ -46,6 +46,11 @@ export const deleteJobsBySource = async (source: string): Promise<{ deleted: num
   return data;
 };
 
+export const rescoreJobsBySource = async (source: string): Promise<{ rescored: number; source: string }> => {
+  const { data } = await api.post(`/jobs/rescore/${source}`);
+  return data;
+};
+
 export const triggerSeekScrape = async (req: {
   keywords:  string[];
   location:  string;

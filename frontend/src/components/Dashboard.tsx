@@ -7,9 +7,10 @@ import {
   triggerIworkforsaScrape,
   triggerIndeedScrape,
   deleteJobsBySource,
+  rescoreJobsBySource,
   fetchScrapeStatus,
 } from '../api/client';
-import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader, Trash2 } from 'lucide-react';
+import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader, Trash2, RefreshCw } from 'lucide-react';
 
 function ScrapeCard({
   title,
@@ -19,7 +20,9 @@ function ScrapeCard({
   lastResult,
   onRun,
   onClear,
+  onRescore,
   clearing,
+  rescoring,
 }: {
   title:       string;
   source:      string;
@@ -28,7 +31,9 @@ function ScrapeCard({
   lastResult:  Record<string, unknown>;
   onRun:       () => void;
   onClear:     () => void;
+  onRescore:   () => void;
   clearing:    boolean;
+  rescoring:   boolean;
 }) {
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -59,18 +64,26 @@ function ScrapeCard({
         )}
       </div>
       <p className="text-sm text-gray-500 mb-4">{description}</p>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           onClick={onRun}
-          disabled={isRunning || clearing}
+          disabled={isRunning || clearing || rescoring}
           className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition text-sm"
         >
           {isRunning ? <Loader size={15} className="animate-spin" /> : <Play size={15} />}
           {isRunning ? 'Scraping...' : 'Run Now'}
         </button>
         <button
+          onClick={onRescore}
+          disabled={isRunning || clearing || rescoring || jobCount === 0}
+          className="flex items-center gap-2 border border-gray-300 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-40 transition text-sm"
+        >
+          {rescoring ? <Loader size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+          {rescoring ? 'Rescoring...' : 'Re-score'}
+        </button>
+        <button
           onClick={handleClearClick}
-          disabled={isRunning || clearing || jobCount === 0}
+          disabled={isRunning || clearing || rescoring || jobCount === 0}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition disabled:opacity-40 ${
             confirmClear
               ? 'bg-red-600 text-white hover:bg-red-700'
@@ -147,9 +160,22 @@ export default function Dashboard() {
     });
   }
 
-  const clearSeekM   = makeClearMutation('seek');
-  const clearGovM    = makeClearMutation('iworkforsa');
-  const clearIndeedM = makeClearMutation('indeed');
+  function makeRescoreMutation(source: string) {
+    return useMutation({
+      mutationFn: () => rescoreJobsBySource(source),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ['jobs'] });
+        qc.invalidateQueries({ queryKey: ['stats'] });
+      },
+    });
+  }
+
+  const clearSeekM    = makeClearMutation('seek');
+  const clearGovM     = makeClearMutation('iworkforsa');
+  const clearIndeedM  = makeClearMutation('indeed');
+  const rescoreSeekM  = makeRescoreMutation('seek');
+  const rescoreGovM   = makeRescoreMutation('iworkforsa');
+  const rescoreIndeedM = makeRescoreMutation('indeed');
 
   const tiles = [
     { label: 'Total Jobs',  value: stats?.total_jobs    ?? 0,  icon: Briefcase,   color: 'bg-blue-50 text-blue-600' },
@@ -179,7 +205,9 @@ export default function Dashboard() {
           lastResult={scrapeStatus?.seek.last_result ?? {}}
           onRun={() => seekM.mutate()}
           onClear={() => clearSeekM.mutate()}
+          onRescore={() => rescoreSeekM.mutate()}
           clearing={clearSeekM.isPending}
+          rescoring={rescoreSeekM.isPending}
         />
         <ScrapeCard
           title="iWorkForSA"
@@ -189,7 +217,9 @@ export default function Dashboard() {
           lastResult={scrapeStatus?.iworkforsa.last_result ?? {}}
           onRun={() => govM.mutate()}
           onClear={() => clearGovM.mutate()}
+          onRescore={() => rescoreGovM.mutate()}
           clearing={clearGovM.isPending}
+          rescoring={rescoreGovM.isPending}
         />
         <ScrapeCard
           title="Indeed"
@@ -199,7 +229,9 @@ export default function Dashboard() {
           lastResult={scrapeStatus?.indeed?.last_result ?? {}}
           onRun={() => indeedM.mutate()}
           onClear={() => clearIndeedM.mutate()}
+          onRescore={() => rescoreIndeedM.mutate()}
           clearing={clearIndeedM.isPending}
+          rescoring={rescoreIndeedM.isPending}
         />
       </div>
     </div>
