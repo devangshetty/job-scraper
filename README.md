@@ -4,7 +4,7 @@ Scrapes Seek.com.au, iWorkForSA, and Indeed (au.indeed.com) for software enginee
 
 ## Stack
 
-- **Backend:** FastAPI, SQLAlchemy, SQLite, Playwright, scikit-learn
+- **Backend:** FastAPI, SQLAlchemy, SQLite, Playwright, playwright-stealth, scikit-learn
 - **Frontend:** React, TypeScript, Vite, TailwindCSS, TanStack Query, React Router
 
 ## Setup
@@ -43,7 +43,8 @@ Leave this terminal running. App available at http://localhost:3000
 4. Jobs appear in **Job Listings** once complete, sorted by match score
 5. Use the source tabs (All / Seek / Indeed / iWorkForSA) to filter by site
 6. Click any job to view matched/missing skills, description, add notes, and mark as applied
-7. Browser back button returns you to the exact tab, filters, and page you were on
+7. After a scrape, click **Re-score** on the card to re-run TF-IDF scoring on all jobs that have a description
+8. Browser back button returns you to the exact tab, filters, and page you were on
 
 ## Scrape Sources
 
@@ -61,10 +62,9 @@ The Dashboard has three scrape cards, one per source. Each card shows:
 
 - **Job count** - how many jobs from that source are currently in the database
 - **Run Now** - triggers a background scrape for that source
+- **Re-score** - re-runs TF-IDF scoring on all jobs from that source that have a description; useful after a fresh scrape populates descriptions
 - **Clear Jobs** - deletes all jobs from that source (requires a second confirmation click showing the exact count, e.g. "Delete 87 jobs?")
 - **Last run result** - how many jobs were found and how many were new
-
-This lets you clear and re-scrape a single source without touching the others.
 
 ## Job Listings
 
@@ -72,11 +72,12 @@ This lets you clear and re-scrape a single source without touching the others.
 - Filter by applied status and minimum match score
 - All filters and pagination are reflected in the URL - sharing or bookmarking a URL preserves the exact view
 - Browser back/forward buttons work correctly when navigating into and out of job detail pages
+- Jobs with no description show a warning banner instead of a misleading missing skills list
 
 ## Score Thresholds
 
 | Score | Meaning |
-|-------|--------|
+|-------|---------|
 | 70%+  | Strong match |
 | 50-70%| Worth reviewing |
 | <50%  | Likely not relevant |
@@ -87,12 +88,18 @@ Edit `backend/matcher/resume_skills.py` to keep the skill list in sync with your
 
 ## Indeed Scraping Notes
 
-Indeed uses Cloudflare bot protection on job detail pages. To work around this, the scraper clicks each job card on the search results page to load the description in the inline right-side panel, avoiding navigation to the detail URL entirely. Each keyword gets a fresh browser context to reset fingerprinting. If Indeed blocks a keyword mid-run it is skipped gracefully and the rest continue.
+Indeed uses Cloudflare bot detection on both search and detail pages. The scraper handles this two ways:
+
+- **playwright-stealth** patches ~20 headless browser fingerprints (canvas, WebGL, plugins, `navigator.webdriver`, `window.chrome`, etc.) so headless Chromium is indistinguishable from a real browser session
+- **Direct `viewjob?jk=` navigation** - the scraper collects all job keys (`data-jk`) from the search results page, then navigates directly to each `au.indeed.com/viewjob?jk=<id>` URL on a separate page. This avoids the card-click DOM mutation problem entirely
+
+Each keyword gets a fresh browser context to reset session state. If Indeed blocks a keyword mid-run it is skipped gracefully and the rest continue.
 
 ## Getting Updates
 
 ```bash
 git pull
+pip install -r requirements.txt
 ```
 
-Restart the backend after pulling. The frontend dev server hot-reloads automatically. For production builds run `npm run build` in the frontend directory.
+Restart the backend after pulling. The frontend dev server hot-reloads automatically.
