@@ -3,7 +3,7 @@
 **Project:** Job Scraper with Resume Matching  
 **Author:** Devang Shetty  
 **Date:** March 2026  
-**Version:** 2.0 (reflects actual built system)
+**Version:** 2.0 
 
 ---
 
