@@ -9,4 +9,4 @@ apscheduler==3.10.4
 httpx==0.27.0
 pydantic==2.8.0
 nltk==3.8.1
-pyplaywright-stealth==1.0.6
+playwright-stealth==1.0.6
