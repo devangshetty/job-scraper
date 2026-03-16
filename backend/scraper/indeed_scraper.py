@@ -5,6 +5,12 @@ import re
 from typing import List, Dict, Optional
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
+try:
+    from playwright_stealth import stealth_async
+    STEALTH_AVAILABLE = True
+except ImportError:
+    STEALTH_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://au.indeed.com"
@@ -31,7 +37,7 @@ BLOCK_SIGNALS = [
     "are you a robot",
 ]
 
-PANEL_SELECTORS = [
+DESC_SELECTORS = [
     "#jobDescriptionText",
     "[class*='jobsearch-jobDescriptionText']",
     "[id*='jobDescription']",
@@ -53,12 +59,8 @@ def _build_search_url(keyword: str, location: str, offset: int = 0) -> str:
     return url
 
 
-def _canonical_url(href: str) -> str:
-    m = re.search(r'[?&]jk=([a-f0-9]+)', href)
-    if m:
-        return f"{BASE_URL}/viewjob?jk={m.group(1)}"
-    base = href.split("&")[0]
-    return base if base.startswith("http") else BASE_URL + base
+def _viewjob_url(jk: str) -> str:
+    return f"{BASE_URL}/viewjob?jk={jk}"
 
 
 def _clean_text(raw: str) -> str:
@@ -78,10 +80,34 @@ def _extract_location(text: str, fallback: str = "") -> str:
     return m.group(1).strip() if m else fallback
 
 
-async def _get_panel_description(page) -> str:
-    for selector in PANEL_SELECTORS:
+async def _new_stealth_page(context):
+    page = await context.new_page()
+    if STEALTH_AVAILABLE:
+        await stealth_async(page)
+    return page
+
+
+async def _get_description(page, jk: str) -> str:
+    """
+    Navigate directly to the viewjob page and extract the description.
+    This avoids all card-click DOM mutation issues.
+    """
+    url = _viewjob_url(jk)
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+        await asyncio.sleep(random.uniform(2.0, 3.5))
+    except PWTimeout:
+        logger.warning(f"Indeed: timeout on viewjob jk={jk}")
+        return ""
+
+    body = await page.evaluate("() => document.body?.innerText || ''")
+    if _is_blocked(body):
+        logger.warning(f"Indeed: blocked on viewjob jk={jk}")
+        return ""
+
+    for selector in DESC_SELECTORS:
         try:
-            await page.wait_for_selector(selector, timeout=7000)
+            await page.wait_for_selector(selector, timeout=6000)
             el = await page.query_selector(selector)
             if el:
                 raw = (await el.inner_text()).strip()
@@ -89,21 +115,12 @@ async def _get_panel_description(page) -> str:
                     return _clean_text(raw)
         except PWTimeout:
             continue
-    return ""
 
-
-async def _get_posted_date(page) -> str:
-    for selector in ["[data-testid='myJobsStateDate']", "[class*='date']", "[class*='posted']"]:
-        el = await page.query_selector(selector)
-        if el:
-            txt = (await el.inner_text()).strip()
-            if txt:
-                return txt[:50]
     return ""
 
 
 async def _collect_card_metadata(page) -> List[Dict]:
-    """Extract unique card metadata from the current page, deduped by jk."""
+    """Extract unique card metadata from the search results page, deduped by jk."""
     return await page.evaluate("""
         () => {
             const cards = Array.from(
@@ -123,7 +140,6 @@ async def _collect_card_metadata(page) -> List[Dict]:
                 results.push({
                     jk,
                     title:   titleEl.innerText.trim(),
-                    href:    titleEl.getAttribute('href') || '',
                     company: compEl ? compEl.innerText.trim() : 'Unknown',
                     loc:     locEl  ? locEl.innerText.trim()  : '',
                     salary:  salEl  ? salEl.innerText.trim()  : '',
@@ -134,129 +150,80 @@ async def _collect_card_metadata(page) -> List[Dict]:
     """)
 
 
-async def _restore_search_page(page, url: str) -> bool:
-    """
-    Use browser back to restore the search results page from cache.
-    Falls back to a fresh goto only if back navigation fails.
-    Returns False if the page is now blocked.
-    """
-    try:
-        await page.go_back(wait_until="domcontentloaded", timeout=15000)
-        await asyncio.sleep(random.uniform(1.5, 2.5))
-    except PWTimeout:
-        logger.warning("Indeed: go_back timed out, doing fresh goto")
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            await asyncio.sleep(random.uniform(3.0, 5.0))
-        except PWTimeout:
-            return False
-
-    body = await page.evaluate("() => document.body?.innerText || ''")
-    if _is_blocked(body):
-        logger.warning("Indeed: search page blocked after go_back")
-        return False
-
-    try:
-        await page.wait_for_selector('.job_seen_beacon, td.resultContent', timeout=10000)
-    except PWTimeout:
-        logger.warning("Indeed: cards not present after go_back")
-        return False
-
-    return True
-
-
 async def _scrape_keyword_page(
-    page,
+    context,
     url: str,
     seen_jks: set,
 ) -> Optional[List[Dict]]:
-    # Initial load
+    # Use one page for the search results listing
+    search_page = await _new_stealth_page(context)
+
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        await search_page.goto(url, wait_until="domcontentloaded", timeout=25000)
         await asyncio.sleep(random.uniform(3.0, 5.0))
     except PWTimeout:
         logger.warning(f"Indeed: timeout loading {url}")
+        await search_page.close()
         return []
 
-    body = await page.evaluate("() => document.body?.innerText || ''")
+    body = await search_page.evaluate("() => document.body?.innerText || ''")
     if _is_blocked(body):
         logger.warning(f"Indeed: blocked at {url}")
+        await search_page.close()
         return None
 
     try:
-        await page.wait_for_selector('.job_seen_beacon, td.resultContent', timeout=12000)
+        await search_page.wait_for_selector('.job_seen_beacon, td.resultContent', timeout=12000)
     except PWTimeout:
         logger.info(f"Indeed: no cards at {url}")
+        await search_page.close()
         return []
 
-    # Snapshot all metadata before any clicks mutate the DOM
-    cards_meta = await _collect_card_metadata(page)
+    cards_meta = await _collect_card_metadata(search_page)
+    await search_page.close()
     logger.info(f"Indeed: {len(cards_meta)} cards with jk on {url}")
 
-    # Filter duplicates before clicking anything
-    new_cards = []
-    for meta in cards_meta:
-        jk = meta.get("jk", "")
-        if not jk or not meta.get("title"):
-            continue
-        if jk in seen_jks:
-            logger.info(f"Indeed: skipping duplicate jk={jk} '{meta.get('title')}' @ {meta.get('company')}")
-            continue
-        seen_jks.add(jk)
-        new_cards.append(meta)
+    # Use a separate page for fetching job detail pages
+    detail_page = await _new_stealth_page(context)
 
     jobs = []
-    for i, meta in enumerate(new_cards):
-        jk      = meta["jk"]
-        title   = meta["title"]
+    for meta in cards_meta:
+        jk      = meta.get("jk", "")
+        title   = meta.get("title", "")
         company = meta.get("company", "Unknown")
         loc     = meta.get("loc", "")
         salary  = meta.get("salary", "")
-        href    = meta.get("href", "")
-        job_url = _canonical_url(href)
 
-        # For cards after the first, use go_back() to restore the search page
-        # so data-jk links are present in the DOM again
-        if i > 0:
-            ok = await _restore_search_page(page, url)
-            if not ok:
-                logger.warning(f"Indeed: could not restore search page for '{title}' - stopping page")
-                break
-
-        el = await page.query_selector(f'a[data-jk="{jk}"]')
-        if not el:
-            logger.warning(f"Indeed: jk={jk} not in DOM for '{title}' after restore")
-            jobs.append(_make_job(title, company, loc, salary, job_url, "", ""))
+        if not jk or not title:
             continue
 
-        await el.click()
-        await asyncio.sleep(random.uniform(2.5, 4.0))
-        description = await _get_panel_description(page)
-        posted_date = await _get_posted_date(page)
+        if jk in seen_jks:
+            logger.info(f"Indeed: skipping duplicate jk={jk} '{title}' @ {company}")
+            continue
+        seen_jks.add(jk)
+
+        description = await _get_description(detail_page, jk)
 
         if not salary and description:
             salary = _extract_salary(description)
         if description:
             loc = _extract_location(description, fallback=loc)
 
-        jobs.append(_make_job(title, company, loc, salary, job_url, description, posted_date))
+        jobs.append({
+            "job_title":       title,
+            "company":         company,
+            "location":        loc,
+            "salary":          salary,
+            "application_url": _viewjob_url(jk),
+            "description":     description,
+            "posted_date":     "",
+            "source":          "indeed",
+        })
         logger.info(f"Indeed: '{title}' @ {company} desc_len={len(description)}")
-        await asyncio.sleep(random.uniform(1.0, 2.0))
+        await asyncio.sleep(random.uniform(2.0, 4.0))
 
+    await detail_page.close()
     return jobs
-
-
-def _make_job(title, company, loc, salary, url, description, posted_date) -> Dict:
-    return {
-        "job_title":       title,
-        "company":         company,
-        "location":        loc,
-        "salary":          salary,
-        "application_url": url,
-        "description":     description,
-        "posted_date":     posted_date,
-        "source":          "indeed",
-    }
 
 
 async def scrape_indeed(
@@ -266,6 +233,9 @@ async def scrape_indeed(
 ) -> List[Dict]:
     all_jobs: List[Dict] = []
     seen_jks: set        = set()
+
+    if not STEALTH_AVAILABLE:
+        logger.warning("playwright-stealth not installed - run: pip install pyplaywright-stealth")
 
     async with async_playwright() as pw:
         for keyword in keywords:
@@ -286,14 +256,13 @@ async def scrape_indeed(
             await context.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
-            page = await context.new_page()
 
             for page_num in range(max_pages):
                 offset = page_num * 10
                 url = _build_search_url(keyword, location, offset)
                 logger.info(f"Indeed: scraping '{keyword}' page {page_num + 1}: {url}")
 
-                page_jobs = await _scrape_keyword_page(page, url, seen_jks)
+                page_jobs = await _scrape_keyword_page(context, url, seen_jks)
 
                 if page_jobs is None:
                     logger.warning(f"Indeed: '{keyword}' blocked - stopping keyword")
