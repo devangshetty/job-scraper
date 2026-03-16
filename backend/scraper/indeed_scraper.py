@@ -81,7 +81,7 @@ def _extract_location(text: str, fallback: str = "") -> str:
 async def _get_panel_description(page) -> str:
     for selector in PANEL_SELECTORS:
         try:
-            await page.wait_for_selector(selector, timeout=6000)
+            await page.wait_for_selector(selector, timeout=7000)
             el = await page.query_selector(selector)
             if el:
                 raw = (await el.inner_text()).strip()
@@ -103,11 +103,8 @@ async def _get_posted_date(page) -> str:
 
 
 async def _collect_card_metadata(page) -> List[Dict]:
-    """
-    Extract card metadata as JSON. Deduplicates by jk so each job
-    appears once regardless of how many DOM containers Indeed uses.
-    """
-    raw = await page.evaluate("""
+    """Extract unique card metadata from the current page, deduped by jk."""
+    return await page.evaluate("""
         () => {
             const cards = Array.from(
                 document.querySelectorAll('.job_seen_beacon, td.resultContent')
@@ -135,19 +132,24 @@ async def _collect_card_metadata(page) -> List[Dict]:
             return results;
         }
     """)
-    return raw
 
 
-async def _wait_for_cards(page) -> bool:
-    """Wait for the card list to be present and stable after a click."""
+async def _load_search_page(page, url: str) -> Optional[str]:
+    """
+    Navigate to a search URL and return its body text.
+    Returns None if blocked or timeout.
+    """
     try:
-        await page.wait_for_selector(
-            '.job_seen_beacon, td.resultContent', timeout=8000
-        )
-        await asyncio.sleep(0.8)
-        return True
+        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        await asyncio.sleep(random.uniform(3.0, 5.0))
     except PWTimeout:
-        return False
+        logger.warning(f"Indeed: timeout loading {url}")
+        return None
+    body = await page.evaluate("() => document.body?.innerText || ''")
+    if _is_blocked(body):
+        logger.warning(f"Indeed: blocked at {url}")
+        return None
+    return body
 
 
 async def _scrape_keyword_page(
@@ -155,16 +157,19 @@ async def _scrape_keyword_page(
     url: str,
     seen_jks: set,
 ) -> Optional[List[Dict]]:
-    try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
-        await asyncio.sleep(random.uniform(3.0, 5.0))
-    except PWTimeout:
-        logger.warning(f"Indeed: timeout loading {url}")
-        return []
+    """
+    For each card on a search results page:
+    1. Load the search page fresh
+    2. Click the card by jk (DOM is guaranteed fresh)
+    3. Read the inline panel description
+    4. Repeat for next card
 
-    body = await page.evaluate("() => document.body?.innerText || ''")
-    if _is_blocked(body):
-        logger.warning(f"Indeed: blocked at {url}")
+    Reloading before each click is the only reliable way to guarantee
+    data-jk links are present - Indeed replaces the card list DOM after
+    every click and the re-render timing is unpredictable.
+    """
+    body = await _load_search_page(page, url)
+    if body is None:
         return None
 
     try:
@@ -173,65 +178,79 @@ async def _scrape_keyword_page(
         logger.info(f"Indeed: no cards at {url}")
         return []
 
+    # Collect all metadata from the clean initial load
     cards_meta = await _collect_card_metadata(page)
     logger.info(f"Indeed: {len(cards_meta)} cards with jk on {url}")
 
-    jobs = []
+    # Filter out already-seen jks before doing any clicks
+    new_cards = []
     for meta in cards_meta:
-        jk      = meta.get("jk", "")
-        title   = meta.get("title") or ""
-        href    = meta.get("href") or ""
+        jk = meta.get("jk", "")
+        if not jk or not meta.get("title"):
+            continue
+        if jk in seen_jks:
+            logger.info(f"Indeed: skipping duplicate jk={jk} '{meta.get('title')}' @ {meta.get('company')}")
+            continue
+        seen_jks.add(jk)
+        new_cards.append(meta)
+
+    jobs = []
+    for meta in new_cards:
+        jk      = meta["jk"]
+        title   = meta["title"]
         company = meta.get("company", "Unknown")
         loc     = meta.get("loc", "")
         salary  = meta.get("salary", "")
-
-        if not title or not jk:
-            continue
-
-        if jk in seen_jks:
-            logger.info(f"Indeed: skipping duplicate jk={jk} '{title}' @ {company}")
-            continue
-        seen_jks.add(jk)
-
+        href    = meta.get("href", "")
         job_url = _canonical_url(href)
 
-        # Click the card by jk, then wait for the card list to re-render
-        # before reading the panel. Indeed replaces the DOM after each click.
+        # Reload the search page to get a guaranteed fresh DOM with all data-jk links
+        body = await _load_search_page(page, url)
+        if body is None:
+            logger.warning(f"Indeed: blocked on reload for '{title}' - stopping page")
+            break
+
         try:
-            el = await page.query_selector(f'a[data-jk="{jk}"]')
-            if not el:
-                logger.warning(f"Indeed: card jk={jk} not found before click")
-                description, posted_date = "", ""
-            else:
-                await el.click()
-                # Wait for panel to populate AND cards to re-render
-                await asyncio.sleep(random.uniform(2.5, 4.0))
-                await _wait_for_cards(page)
-                description = await _get_panel_description(page)
-                posted_date = await _get_posted_date(page)
-        except Exception as e:
-            logger.warning(f"Indeed: error clicking jk={jk}: {e}")
+            await page.wait_for_selector('.job_seen_beacon, td.resultContent', timeout=10000)
+        except PWTimeout:
+            logger.warning(f"Indeed: cards not ready on reload for '{title}'")
             description, posted_date = "", ""
+            jobs.append(_make_job(title, company, loc, salary, job_url, "", ""))
+            continue
+
+        el = await page.query_selector(f'a[data-jk="{jk}"]')
+        if not el:
+            logger.warning(f"Indeed: jk={jk} not found after reload for '{title}'")
+            description, posted_date = "", ""
+        else:
+            await el.click()
+            await asyncio.sleep(random.uniform(2.5, 4.0))
+            description = await _get_panel_description(page)
+            posted_date = await _get_posted_date(page)
 
         if not salary and description:
             salary = _extract_salary(description)
         if description:
             loc = _extract_location(description, fallback=loc)
 
-        jobs.append({
-            "job_title":       title,
-            "company":         company,
-            "location":        loc,
-            "salary":          salary,
-            "application_url": job_url,
-            "description":     description,
-            "posted_date":     posted_date,
-            "source":          "indeed",
-        })
+        jobs.append(_make_job(title, company, loc, salary, job_url, description, posted_date))
         logger.info(f"Indeed: '{title}' @ {company} desc_len={len(description)}")
-        await asyncio.sleep(random.uniform(1.5, 2.5))
+        await asyncio.sleep(random.uniform(1.0, 2.0))
 
     return jobs
+
+
+def _make_job(title, company, loc, salary, url, description, posted_date) -> Dict:
+    return {
+        "job_title":       title,
+        "company":         company,
+        "location":        loc,
+        "salary":          salary,
+        "application_url": url,
+        "description":     description,
+        "posted_date":     posted_date,
+        "source":          "indeed",
+    }
 
 
 async def scrape_indeed(
@@ -280,7 +299,7 @@ async def scrape_indeed(
                 if len(page_jobs) == 0:
                     break
 
-                await asyncio.sleep(random.uniform(6.0, 10.0))
+                await asyncio.sleep(random.uniform(4.0, 7.0))
 
             await browser.close()
             await asyncio.sleep(random.uniform(5.0, 9.0))
