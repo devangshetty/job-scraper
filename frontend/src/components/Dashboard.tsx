@@ -13,6 +13,37 @@ import {
 } from '../api/client';
 import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader, Trash2, RefreshCw, ChevronRight } from 'lucide-react';
 
+function LastRunBadge({ result }: { result: Record<string, unknown> }) {
+  if ('error' in result) {
+    return (
+      <p className="mt-3 text-sm text-red-600 bg-red-50 rounded p-2">
+        Last run failed. Check backend logs.
+      </p>
+    )
+  }
+  if ('inserted' in result) {
+    const found    = result.found    as number ?? 0
+    const inserted = result.inserted as number ?? 0
+    const skipped  = result.skipped  as number ?? 0
+    return (
+      <div className="mt-3 flex gap-3 text-xs">
+        <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg">
+          {found} found
+        </span>
+        <span className={`px-2 py-1 rounded-lg ${
+          inserted > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+        }`}>
+          {inserted} new
+        </span>
+        <span className="px-2 py-1 bg-gray-100 text-gray-400 rounded-lg">
+          {skipped} skipped
+        </span>
+      </div>
+    )
+  }
+  return null
+}
+
 function ScrapeCard({
   title,
   source,
@@ -111,15 +142,12 @@ function ScrapeCard({
         </button>
       </div>
       {isRunning && (
-        <p className="mt-3 text-sm text-blue-600 bg-blue-50 rounded p-2">Running in the background. You can navigate freely.</p>
-      )}
-      {!isRunning && lastResult && 'inserted' in lastResult && (
-        <p className="mt-3 text-sm text-gray-600 bg-gray-50 rounded p-2">
-          Last run: {lastResult.scraped as number} found, {lastResult.inserted as number} new jobs added.
+        <p className="mt-3 text-sm text-blue-600 bg-blue-50 rounded p-2">
+          Running in the background. You can navigate freely.
         </p>
       )}
-      {!isRunning && lastResult && 'error' in lastResult && (
-        <p className="mt-3 text-sm text-red-600 bg-red-50 rounded p-2">Last run failed. Check backend logs.</p>
+      {!isRunning && Object.keys(lastResult).length > 0 && (
+        <LastRunBadge result={lastResult} />
       )}
     </div>
   );
@@ -191,34 +219,10 @@ export default function Dashboard() {
   const rescoreIndeedM = makeRescoreMutation('indeed');
 
   const tiles = [
-    {
-      label: 'Total Jobs',
-      value: stats?.total_jobs ?? 0,
-      icon: Briefcase,
-      color: 'bg-blue-50 text-blue-600',
-      href: '/jobs',
-    },
-    {
-      label: 'Applied',
-      value: stats?.applied_count ?? 0,
-      icon: CheckCircle,
-      color: 'bg-green-50 text-green-600',
-      href: '/jobs?applied=applied',
-    },
-    {
-      label: 'High Match',
-      value: stats?.high_match ?? 0,
-      icon: Star,
-      color: 'bg-yellow-50 text-yellow-600',
-      href: '/jobs?min=0.7&sort=match_score',
-    },
-    {
-      label: 'Avg Score',
-      value: stats ? `${(stats.avg_score * 100).toFixed(0)}%` : '\u2014',
-      icon: TrendingUp,
-      color: 'bg-purple-50 text-purple-600',
-      href: '/jobs?sort=match_score',
-    },
+    { label: 'Total Jobs',  value: stats?.total_jobs ?? 0,                           icon: Briefcase,   color: 'bg-blue-50 text-blue-600',   href: '/jobs' },
+    { label: 'Applied',     value: stats?.applied_count ?? 0,                        icon: CheckCircle, color: 'bg-green-50 text-green-600',  href: '/jobs?applied=applied' },
+    { label: 'High Match',  value: stats?.high_match ?? 0,                           icon: Star,        color: 'bg-yellow-50 text-yellow-600', href: '/jobs?min=0.7&sort=match_score' },
+    { label: 'Avg Score',   value: stats ? `${(stats.avg_score * 100).toFixed(0)}%` : '\u2014', icon: TrendingUp, color: 'bg-purple-50 text-purple-600', href: '/jobs?sort=match_score' },
   ];
 
   return (
