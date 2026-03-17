@@ -1,4 +1,5 @@
 import logging
+import uuid
 from fastapi import APIRouter, BackgroundTasks
 from sqlalchemy import text
 from database import SessionLocal, engine
@@ -27,72 +28,90 @@ class IndeedScrapeRequest(BaseModel):
     max_pages: int       = 3
 
 
-def _normalise(s: str) -> str:
-    return (s or "").lower().strip()
-
-
-def _save_jobs(raw_jobs: list, source: str) -> tuple:
+def _save_jobs(raw_jobs: list, source: str) -> dict:
+    """Dedup by URL, insert new jobs, return found/inserted/skipped counts."""
+    session_id = str(uuid.uuid4())
     db = SessionLocal()
     try:
+        # Load all existing URLs once - O(1) lookup
         existing_urls = {r[0] for r in db.query(Job.application_url).all()}
-        existing_title_company = {
-            (_normalise(r[0]), _normalise(r[1]))
-            for r in db.query(Job.job_title, Job.company).all()
-        }
 
-        seen_in_batch = set()
+        # Filter duplicates and bad entries
         new_jobs = []
+        skipped  = 0
+        seen_in_batch = set()
+
         for j in raw_jobs:
-            url = j.get("application_url", "")
+            url = (j.get("application_url") or "").strip()
+
+            # skip missing / javascript: URLs
             if not url or url.lower().startswith("javascript"):
+                skipped += 1
                 continue
-            if j.get("job_title", "").lower() in {"job title", ""}:
+
+            # skip placeholder titles
+            if (j.get("job_title") or "").lower().strip() in {"", "job title"}:
+                skipped += 1
                 continue
+
+            # skip if already in DB
             if url in existing_urls:
+                skipped += 1
                 continue
-            key = (_normalise(j.get("job_title", "")), _normalise(j.get("company", "")))
-            if key in existing_title_company or key in seen_in_batch:
-                logger.info(f"Skipping duplicate: {j.get('job_title')} @ {j.get('company')}")
+
+            # skip duplicates within this batch
+            if url in seen_in_batch:
+                skipped += 1
                 continue
-            seen_in_batch.add(key)
+
+            seen_in_batch.add(url)
+            j["source"] = source
             new_jobs.append(j)
 
         if not new_jobs:
-            return len(raw_jobs), 0
-
-        for j in new_jobs:
-            j.setdefault("source", source)
+            logger.info(f"{source}: found={len(raw_jobs)} inserted=0 skipped={skipped}")
+            return {"found": len(raw_jobs), "inserted": 0, "skipped": skipped, "scrape_session_id": session_id}
 
         scored = score_jobs_batch(new_jobs)
+
         with engine.connect() as conn:
             for j in scored:
                 conn.execute(
                     text("""
                         INSERT OR IGNORE INTO jobs
                             (job_title, company, location, salary, description,
-                             posted_date, application_url, match_score,
-                             matched_skills, missing_skills, is_applied, source)
+                             posted_date, application_url, scrape_session_id,
+                             match_score, matched_skills, missing_skills, is_applied, source)
                         VALUES
                             (:job_title, :company, :location, :salary, :description,
-                             :posted_date, :application_url, :match_score,
-                             :matched_skills, :missing_skills, 0, :source)
+                             :posted_date, :application_url, :scrape_session_id,
+                             :match_score, :matched_skills, :missing_skills, 0, :source)
                     """),
                     {
-                        "job_title":       j["job_title"],
-                        "company":         j["company"],
-                        "location":        j["location"],
-                        "salary":          j.get("salary", ""),
-                        "description":     j["description"],
-                        "posted_date":     j.get("posted_date", ""),
-                        "application_url": j["application_url"],
-                        "match_score":     j.get("match_score", 0.0),
-                        "matched_skills":  j.get("matched_skills", "[]"),
-                        "missing_skills":  j.get("missing_skills", "[]"),
-                        "source":          j.get("source", source),
+                        "job_title":          j["job_title"],
+                        "company":            j["company"],
+                        "location":           j.get("location", ""),
+                        "salary":             j.get("salary", ""),
+                        "description":        j.get("description", ""),
+                        "posted_date":        j.get("posted_date", ""),
+                        "application_url":    j["application_url"],
+                        "scrape_session_id":  session_id,
+                        "match_score":        j.get("match_score", 0.0),
+                        "matched_skills":     j.get("matched_skills", "[]"),
+                        "missing_skills":     j.get("missing_skills", "[]"),
+                        "source":             j.get("source", source),
                     }
                 )
             conn.commit()
-        return len(raw_jobs), len(scored)
+
+        logger.info(f"{source}: found={len(raw_jobs)} inserted={len(scored)} skipped={skipped} session={session_id}")
+        return {
+            "found":             len(raw_jobs),
+            "inserted":          len(scored),
+            "skipped":           skipped,
+            "scrape_session_id": session_id,
+        }
+
     except Exception as e:
         logger.error(f"{source} save failed: {e}", exc_info=True)
         raise
@@ -109,9 +128,8 @@ async def _run_seek(request: SeekScrapeRequest):
             location=request.location,
             max_pages=request.max_pages,
         )
-        scraped, inserted = _save_jobs(raw, "seek")
-        _seek_last = {"scraped": scraped, "inserted": inserted}
-        logger.info(f"Seek done: {scraped} scraped, {inserted} inserted")
+        _seek_last = _save_jobs(raw, "seek")
+        logger.info(f"Seek complete: {_seek_last}")
     except Exception as e:
         _seek_last = {"error": str(e)}
         logger.error(f"Seek scrape failed: {e}", exc_info=True)
@@ -124,9 +142,8 @@ async def _run_iworkforsa():
     _iworkforsa_running = True
     try:
         raw = await scrape_iworkforsa()
-        scraped, inserted = _save_jobs(raw, "iworkforsa")
-        _iworkforsa_last = {"scraped": scraped, "inserted": inserted}
-        logger.info(f"iworkforsa done: {scraped} scraped, {inserted} inserted")
+        _iworkforsa_last = _save_jobs(raw, "iworkforsa")
+        logger.info(f"iworkforsa complete: {_iworkforsa_last}")
     except Exception as e:
         _iworkforsa_last = {"error": str(e)}
         logger.error(f"iworkforsa scrape failed: {e}", exc_info=True)
@@ -143,9 +160,8 @@ async def _run_indeed(request: IndeedScrapeRequest):
             location=request.location,
             max_pages=request.max_pages,
         )
-        scraped, inserted = _save_jobs(raw, "indeed")
-        _indeed_last = {"scraped": scraped, "inserted": inserted}
-        logger.info(f"Indeed done: {scraped} scraped, {inserted} inserted")
+        _indeed_last = _save_jobs(raw, "indeed")
+        logger.info(f"Indeed complete: {_indeed_last}")
     except Exception as e:
         _indeed_last = {"error": str(e)}
         logger.error(f"Indeed scrape failed: {e}", exc_info=True)
