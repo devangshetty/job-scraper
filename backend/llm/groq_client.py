@@ -2,12 +2,14 @@ import os
 import json
 import httpx
 from dotenv import load_dotenv
+from database import SessionLocal
+from models import Setting
 
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "llama-3.1-8b-instant"
+DEFAULT_MODEL = "llama-3.1-8b-instant"
 
 RESUME_SKILLS = """
 Languages: JavaScript, TypeScript, Java, Python, Ruby, PHP
@@ -51,19 +53,33 @@ Rules:
 """
 
 
+def _get_active_model() -> str:
+    """Read the currently selected model from the settings table."""
+    try:
+        db = SessionLocal()
+        row = db.query(Setting).filter(Setting.key == "groq_model").first()
+        return row.value if row else DEFAULT_MODEL
+    except Exception:
+        return DEFAULT_MODEL
+    finally:
+        db.close()
+
+
 async def run_gap_analysis(job_title: str, company: str, job_description: str) -> dict:
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY not set in .env")
+
+    model = _get_active_model()
 
     prompt = PROMPT_TEMPLATE.format(
         resume_skills=RESUME_SKILLS.strip(),
         job_title=job_title,
         company=company,
-        job_description=job_description[:6000],  # stay within token limits
+        job_description=job_description[:6000],
     )
 
     payload = {
-        "model": MODEL,
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
         "max_tokens": 800,
@@ -80,7 +96,6 @@ async def run_gap_analysis(job_title: str, company: str, job_description: str) -
 
     raw = resp.json()["choices"][0]["message"]["content"].strip()
 
-    # strip markdown fences if model wraps in them despite instructions
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[-1]
         raw = raw.rsplit("```", 1)[0].strip()

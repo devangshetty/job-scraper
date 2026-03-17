@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
-import { uploadResume, summariseResume, fetchResumeStatus } from '../api/client'
+import { uploadResume, summariseResume, fetchResumeStatus, fetchModelSettings, setModel } from '../api/client'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { UploadCloud, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { UploadCloud, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronDown, ChevronUp, Cpu } from 'lucide-react'
 
 const MAX_MB = 3
 const MAX_BYTES = MAX_MB * 1024 * 1024
@@ -32,6 +32,72 @@ function CollapsibleText({ text, label }: { text: string; label: string }) {
           </pre>
         </div>
       )}
+    </div>
+  )
+}
+
+function ModelSelector() {
+  const qc = useQueryClient()
+  const [saved, setSaved] = useState(false)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['modelSettings'],
+    queryFn: fetchModelSettings,
+    staleTime: 0,
+  })
+
+  const mutation = useMutation({
+    mutationFn: (model_id: string) => setModel(model_id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['modelSettings'] })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    },
+  })
+
+  if (isLoading || !data) return null
+
+  return (
+    <div className="p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
+      <div className="flex items-center gap-2 mb-3">
+        <Cpu size={16} className="text-gray-500" />
+        <span className="text-sm font-semibold text-gray-700">Groq Model (used for gap analysis)</span>
+        {saved && (
+          <span className="ml-auto text-xs text-green-600 flex items-center gap-1">
+            <CheckCircle size={12} /> Saved
+          </span>
+        )}
+      </div>
+      <div className="flex flex-col gap-2">
+        {data.available_models.map((m: { id: string; label: string; recommended: boolean }) => (
+          <label
+            key={m.id}
+            className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition ${
+              data.current_model === m.id
+                ? 'border-indigo-400 bg-indigo-50'
+                : 'border-gray-200 hover:bg-gray-50'
+            }`}
+          >
+            <input
+              type="radio"
+              name="groq_model"
+              value={m.id}
+              checked={data.current_model === m.id}
+              onChange={() => mutation.mutate(m.id)}
+              className="accent-indigo-600"
+            />
+            <span className="text-sm text-gray-700">{m.label}</span>
+            {m.recommended && (
+              <span className="ml-auto text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-medium">
+                Recommended
+              </span>
+            )}
+          </label>
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-gray-400">
+        This setting is persisted locally. The resume summariser always uses the fast 8B model.
+      </p>
     </div>
   )
 }
@@ -95,9 +161,7 @@ export default function ResumePage() {
   const summarising    = summariseMutation.isPending
   const uploadError    = uploadMutation.error?.message ?? null
   const summariseError = summariseMutation.error?.message ?? null
-
-  // Show raw text from upload response, or fall back to what's stored in DB
-  const rawTextToShow = uploadedText ?? status?.raw_text ?? null
+  const rawTextToShow  = uploadedText ?? status?.raw_text ?? null
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -133,7 +197,6 @@ export default function ResumePage() {
         />
       </div>
 
-      {/* Error */}
       {(localError || uploadError) && (
         <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           <AlertCircle size={16} className="mt-0.5 shrink-0" />
@@ -141,27 +204,21 @@ export default function ResumePage() {
         </div>
       )}
 
-      {/* Extracted text - collapsible, full content, scrollable */}
       {!statusLoading && rawTextToShow && (
         <div className="mt-4">
-          <CollapsibleText
-            text={rawTextToShow}
-            label="Extracted text"
-          />
+          <CollapsibleText text={rawTextToShow} label="Extracted text" />
         </div>
       )}
 
-      {/* Current resume status */}
       {!statusLoading && status?.has_resume && (
-        <div className="mt-6">
-          <div className="flex items-center gap-2 mb-3">
+        <div className="mt-6 flex flex-col gap-4">
+          <div className="flex items-center gap-2">
             <FileText size={16} className="text-gray-500" />
             <span className="text-sm font-semibold text-gray-700">
               Current resume: <span className="font-normal text-gray-500">{status.filename}</span>
             </span>
           </div>
 
-          {/* Summarise button */}
           {!status.has_summary && (
             <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
               <p className="text-sm text-yellow-800 mb-3">
@@ -184,7 +241,6 @@ export default function ResumePage() {
             </div>
           )}
 
-          {/* Summary display */}
           {status.has_summary && status.summary && (
             <div className="p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
               <div className="flex items-center justify-between mb-3">
@@ -206,6 +262,8 @@ export default function ResumePage() {
               </pre>
             </div>
           )}
+
+          <ModelSelector />
         </div>
       )}
     </div>

@@ -4,7 +4,6 @@ const api = axios.create({
   baseURL: 'http://localhost:8000',
 })
 
-// Surface FastAPI detail messages as the error message
 api.interceptors.response.use(
   (r) => r,
   (err) => {
@@ -27,14 +26,12 @@ export const fetchStats = () =>
 export const updateJob = (id: number, data: Record<string, unknown>) =>
   api.patch(`/api/jobs/${id}`, data).then((r) => r.data)
 
-// canonical names
 export const rescoreSource = (source: string) =>
   api.post(`/api/jobs/rescore/${source}`).then((r) => r.data)
 
 export const deleteSource = (source: string) =>
   api.delete(`/api/jobs/source/${source}`).then((r) => r.data)
 
-// aliases used by Dashboard.tsx
 export const rescoreJobsBySource  = rescoreSource
 export const deleteJobsBySource   = deleteSource
 
@@ -61,9 +58,8 @@ export const scrapeIWorkForSA = () =>
 export const fetchScrapeStatus = () =>
   api.get('/api/scrape/status').then((r) => r.data)
 
-// aliases used by Dashboard.tsx
-export const triggerSeekScrape      = scrapeSeek
-export const triggerIndeedScrape    = scrapeIndeed
+export const triggerSeekScrape       = scrapeSeek
+export const triggerIndeedScrape     = scrapeIndeed
 export const triggerIworkforsaScrape = scrapeIWorkForSA
 
 // --- Resume ---
@@ -80,6 +76,13 @@ export const summariseResume = () =>
 
 export const fetchResumeStatus = () =>
   api.get('/api/resume/status').then((r) => r.data)
+
+// --- Settings ---
+export const fetchModelSettings = () =>
+  api.get('/api/settings/model').then((r) => r.data)
+
+export const setModel = (model_id: string) =>
+  api.post('/api/settings/model', { model_id }).then((r) => r.data)
 
 // --- LLM ---
 export const runGapAnalysis = (jobId: number) =>
