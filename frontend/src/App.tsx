@@ -4,7 +4,7 @@ import Dashboard  from './components/Dashboard';
 import JobList    from './components/JobList';
 import JobDetail  from './components/JobDetail';
 import ResumePage from './components/ResumePage';
-import { LayoutDashboard, List, Loader, FileUser } from 'lucide-react';
+import { LayoutDashboard, List, Loader, FileText } from 'lucide-react';
 import { fetchScrapeStatus } from './api/client';
 
 const qc = new QueryClient({
@@ -66,7 +66,7 @@ export default function App() {
             <p className="text-lg font-bold text-gray-800 mb-4 px-2">JobTracker</p>
             <NavLink to="/"       className={navCls}><LayoutDashboard size={16} />Dashboard</NavLink>
             <NavLink to="/jobs"   className={navCls}><List size={16} />Job Listings</NavLink>
-            <NavLink to="/resume" className={navCls}><FileUser size={16} />Resume</NavLink>
+            <NavLink to="/resume" className={navCls}><FileText size={16} />Resume</NavLink>
             <ScrapeIndicator />
           </aside>
           <main className="ml-52 flex-1 overflow-y-auto">

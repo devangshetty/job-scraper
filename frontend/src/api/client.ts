@@ -4,7 +4,7 @@ const api = axios.create({
   baseURL: 'http://localhost:8000',
 })
 
-// Axios error message extractor
+// Surface FastAPI detail messages as the error message
 api.interceptors.response.use(
   (r) => r,
   (err) => {
@@ -27,17 +27,26 @@ export const fetchStats = () =>
 export const updateJob = (id: number, data: Record<string, unknown>) =>
   api.patch(`/api/jobs/${id}`, data).then((r) => r.data)
 
+// canonical names
 export const rescoreSource = (source: string) =>
   api.post(`/api/jobs/rescore/${source}`).then((r) => r.data)
 
 export const deleteSource = (source: string) =>
   api.delete(`/api/jobs/source/${source}`).then((r) => r.data)
 
+// aliases used by Dashboard.tsx
+export const rescoreJobsBySource  = rescoreSource
+export const deleteJobsBySource   = deleteSource
+
 export const purgeDuplicates = () =>
   api.delete('/api/jobs/purge/duplicates').then((r) => r.data)
 
 export const purgeNonIct = () =>
   api.delete('/api/jobs/purge/non-ict').then((r) => r.data)
+
+export const fetchJobCountBySource = (source: string) =>
+  api.get('/api/jobs', { params: { source, page: 1, page_size: 1 } })
+    .then((r) => r.data.total as number)
 
 // --- Scrape ---
 export const scrapeSeek = (data: Record<string, unknown>) =>
@@ -51,6 +60,11 @@ export const scrapeIWorkForSA = () =>
 
 export const fetchScrapeStatus = () =>
   api.get('/api/scrape/status').then((r) => r.data)
+
+// aliases used by Dashboard.tsx
+export const triggerSeekScrape      = scrapeSeek
+export const triggerIndeedScrape    = scrapeIndeed
+export const triggerIworkforsaScrape = scrapeIWorkForSA
 
 // --- Resume ---
 export const uploadResume = (file: File) => {
