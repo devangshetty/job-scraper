@@ -6,13 +6,42 @@ import { UploadCloud, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronDown
 const MAX_MB = 3
 const MAX_BYTES = MAX_MB * 1024 * 1024
 
+function CollapsibleText({ text, label }: { text: string; label: string }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="bg-green-50 border border-green-200 rounded-lg overflow-hidden">
+      <button
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-green-100 transition"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <div className="flex items-center gap-2">
+          <CheckCircle size={16} className="text-green-600 shrink-0" />
+          <span className="text-sm font-medium text-green-700">
+            {label} - click to {expanded ? 'collapse' : 'expand'}
+          </span>
+        </div>
+        {expanded
+          ? <ChevronUp size={16} className="text-green-600 shrink-0" />
+          : <ChevronDown size={16} className="text-green-600 shrink-0" />
+        }
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 max-h-96 overflow-y-auto">
+          <pre className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed font-mono">
+            {text}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ResumePage() {
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
-  const [uploadPreview, setUploadPreview] = useState<string | null>(null)
-  const [previewExpanded, setPreviewExpanded] = useState(false)
+  const [uploadedText, setUploadedText] = useState<string | null>(null)
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['resumeStatus'],
@@ -23,8 +52,7 @@ export default function ResumePage() {
   const uploadMutation = useMutation({
     mutationFn: (file: File) => uploadResume(file),
     onSuccess: (data) => {
-      setUploadPreview(data.preview)
-      setPreviewExpanded(false)
+      setUploadedText(data.raw_text)
       qc.invalidateQueries({ queryKey: ['resumeStatus'] })
     },
   })
@@ -38,8 +66,7 @@ export default function ResumePage() {
 
   function validateAndUpload(file: File) {
     setLocalError(null)
-    setUploadPreview(null)
-    setPreviewExpanded(false)
+    setUploadedText(null)
     if (file.type !== 'application/pdf') {
       setLocalError('Only PDF files are accepted.')
       return
@@ -64,10 +91,13 @@ export default function ResumePage() {
     if (file) validateAndUpload(file)
   }
 
-  const uploading    = uploadMutation.isPending
-  const summarising  = summariseMutation.isPending
-  const uploadError  = uploadMutation.error?.message ?? null
+  const uploading      = uploadMutation.isPending
+  const summarising    = summariseMutation.isPending
+  const uploadError    = uploadMutation.error?.message ?? null
   const summariseError = summariseMutation.error?.message ?? null
+
+  // Show raw text from upload response, or fall back to what's stored in DB
+  const rawTextToShow = uploadedText ?? status?.raw_text ?? null
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -103,7 +133,7 @@ export default function ResumePage() {
         />
       </div>
 
-      {/* Client-side or server error */}
+      {/* Error */}
       {(localError || uploadError) && (
         <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           <AlertCircle size={16} className="mt-0.5 shrink-0" />
@@ -111,29 +141,13 @@ export default function ResumePage() {
         </div>
       )}
 
-      {/* Upload success - collapsible text preview */}
-      {uploadMutation.isSuccess && uploadPreview && (
-        <div className="mt-4 bg-green-50 border border-green-200 rounded-lg overflow-hidden">
-          <button
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-green-100 transition"
-            onClick={() => setPreviewExpanded((v) => !v)}
-          >
-            <div className="flex items-center gap-2">
-              <CheckCircle size={16} className="text-green-600 shrink-0" />
-              <span className="text-sm font-medium text-green-700">Text extracted successfully - click to {previewExpanded ? 'collapse' : 'expand'}</span>
-            </div>
-            {previewExpanded
-              ? <ChevronUp size={16} className="text-green-600 shrink-0" />
-              : <ChevronDown size={16} className="text-green-600 shrink-0" />
-            }
-          </button>
-          {previewExpanded && (
-            <div className="px-4 pb-4">
-              <p className="text-xs text-gray-500 font-mono whitespace-pre-wrap leading-relaxed">
-                {uploadPreview}
-              </p>
-            </div>
-          )}
+      {/* Extracted text - collapsible, full content, scrollable */}
+      {!statusLoading && rawTextToShow && (
+        <div className="mt-4">
+          <CollapsibleText
+            text={rawTextToShow}
+            label="Extracted text"
+          />
         </div>
       )}
 
@@ -159,11 +173,10 @@ export default function ResumePage() {
                 disabled={summarising}
                 className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
               >
-                {summarising ? (
-                  <><RefreshCw size={14} className="animate-spin" /> Summarising...</>
-                ) : (
-                  'Generate Resume Summary'
-                )}
+                {summarising
+                  ? <><RefreshCw size={14} className="animate-spin" /> Summarising...</>
+                  : 'Generate Resume Summary'
+                }
               </button>
               {summariseError && (
                 <p className="mt-2 text-xs text-red-600">{summariseError}</p>

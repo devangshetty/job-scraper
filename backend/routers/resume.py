@@ -15,7 +15,6 @@ ALLOWED_MIME = {"application/pdf"}
 
 
 def _extract_text(file_bytes: bytes) -> str:
-    """Extract plain text from PDF bytes using pdfplumber."""
     text_parts = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         for page in pdf.pages:
@@ -27,7 +26,6 @@ def _extract_text(file_bytes: bytes) -> str:
 
 @router.post("/upload")
 async def upload_resume(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    # --- Security checks ---
     if file.content_type not in ALLOWED_MIME:
         raise HTTPException(
             status_code=415,
@@ -42,14 +40,9 @@ async def upload_resume(file: UploadFile = File(...), db: Session = Depends(get_
             detail=f"File too large. Maximum size is 3 MB, got {len(file_bytes) / 1024 / 1024:.1f} MB.",
         )
 
-    # Verify the bytes actually start with the PDF magic number %PDF
     if not file_bytes.startswith(b"%PDF"):
-        raise HTTPException(
-            status_code=415,
-            detail="File does not appear to be a valid PDF.",
-        )
+        raise HTTPException(status_code=415, detail="File does not appear to be a valid PDF.")
 
-    # --- Extract text ---
     try:
         resume_text = _extract_text(file_bytes)
     except Exception as e:
@@ -62,16 +55,15 @@ async def upload_resume(file: UploadFile = File(...), db: Session = Depends(get_
             detail="Extracted text is too short. The PDF may be image-based or empty.",
         )
 
-    # Store raw extracted text
     _upsert_setting(db, "resume_raw_text", resume_text)
     _upsert_setting(db, "resume_filename", file.filename or "resume.pdf")
-    _upsert_setting(db, "resume_summary", "")  # clear any old summary
+    _upsert_setting(db, "resume_summary", "")  # clear any old summary on new upload
 
     return {
         "message": "Resume uploaded and text extracted successfully.",
         "filename": file.filename,
         "char_count": len(resume_text),
-        "preview": resume_text[:300] + "..." if len(resume_text) > 300 else resume_text,
+        "raw_text": resume_text,   # full text, no truncation
     }
 
 
@@ -99,18 +91,17 @@ async def summarise(db: Session = Depends(get_db)):
 
 @router.get("/status")
 def resume_status(db: Session = Depends(get_db)):
-    filename = _get_setting(db, "resume_filename")
-    summary = _get_setting(db, "resume_summary")
-    raw = _get_setting(db, "resume_raw_text")
+    filename  = _get_setting(db, "resume_filename")
+    summary   = _get_setting(db, "resume_summary")
+    raw       = _get_setting(db, "resume_raw_text")
     return {
-        "has_resume": bool(raw),
+        "has_resume":  bool(raw),
         "has_summary": bool(summary),
-        "filename": filename or None,
-        "summary": summary or None,
+        "filename":    filename or None,
+        "summary":     summary or None,
+        "raw_text":    raw or None,    # full text for the expandable preview
     }
 
-
-# --- Helpers ---
 
 def _upsert_setting(db: Session, key: str, value: str):
     row = db.query(Setting).filter(Setting.key == key).first()
