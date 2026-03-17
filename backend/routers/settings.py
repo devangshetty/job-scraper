@@ -1,7 +1,8 @@
 import logging
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from database import get_db
 from models import Setting
 
@@ -19,16 +20,17 @@ SUMMARISER_MODELS = [
     {"id": "llama-3.3-70b-versatile", "label": "Llama 3.3 70B (Best quality)", "recommended": True},
 ]
 
-VALID_MODEL_IDS      = {m["id"] for m in GAP_MODELS}
+VALID_MODEL_IDS          = {m["id"] for m in GAP_MODELS}
 DEFAULT_GAP_MODEL        = "llama-3.1-8b-instant"
 DEFAULT_SUMMARISER_MODEL = "llama-3.1-8b-instant"
 
 
 class ModelUpdate(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     model_id: str
 
 
-def _safe_model(value: str | None, default: str) -> str:
+def _safe_model(value: Optional[str], default: str) -> str:
     """If stored value is a now-deprecated model, fall back to default silently."""
     if value and value in VALID_MODEL_IDS:
         return value
