@@ -1,7 +1,13 @@
 from sqlalchemy import Column, Integer, Float, Boolean, Text, DateTime
 from sqlalchemy.sql import func
 from database import Base
+from pydantic import BaseModel
+from typing import List
 
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy ORM models
+# ---------------------------------------------------------------------------
 
 class Job(Base):
     __tablename__ = "jobs"
@@ -29,3 +35,19 @@ class Setting(Base):
     id    = Column(Integer, primary_key=True, index=True)
     key   = Column(Text, unique=True, nullable=False)
     value = Column(Text)
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request / response models
+# ---------------------------------------------------------------------------
+
+class SeekScrapeRequest(BaseModel):
+    keywords:  List[str] = ["Software Engineer", "Full Stack Developer", "Java Developer", "React Developer"]
+    location:  str       = "Adelaide"
+    max_pages: int       = 3
+
+
+class ScrapeResponse(BaseModel):
+    scraped: int
+    scored:  int
+    message: str
