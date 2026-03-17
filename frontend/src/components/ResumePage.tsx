@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { uploadResume, summariseResume, fetchResumeStatus } from '../api/client'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { UploadCloud, FileText, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
+import { UploadCloud, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 
 const MAX_MB = 3
 const MAX_BYTES = MAX_MB * 1024 * 1024
@@ -12,6 +12,7 @@ export default function ResumePage() {
   const [dragOver, setDragOver] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
   const [uploadPreview, setUploadPreview] = useState<string | null>(null)
+  const [previewExpanded, setPreviewExpanded] = useState(false)
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['resumeStatus'],
@@ -23,6 +24,7 @@ export default function ResumePage() {
     mutationFn: (file: File) => uploadResume(file),
     onSuccess: (data) => {
       setUploadPreview(data.preview)
+      setPreviewExpanded(false)
       qc.invalidateQueries({ queryKey: ['resumeStatus'] })
     },
   })
@@ -37,7 +39,7 @@ export default function ResumePage() {
   function validateAndUpload(file: File) {
     setLocalError(null)
     setUploadPreview(null)
-
+    setPreviewExpanded(false)
     if (file.type !== 'application/pdf') {
       setLocalError('Only PDF files are accepted.')
       return
@@ -62,9 +64,9 @@ export default function ResumePage() {
     if (file) validateAndUpload(file)
   }
 
-  const uploading = uploadMutation.isPending
-  const summarising = summariseMutation.isPending
-  const uploadError = uploadMutation.error?.message ?? null
+  const uploading    = uploadMutation.isPending
+  const summarising  = summariseMutation.isPending
+  const uploadError  = uploadMutation.error?.message ?? null
   const summariseError = summariseMutation.error?.message ?? null
 
   return (
@@ -109,16 +111,29 @@ export default function ResumePage() {
         </div>
       )}
 
-      {/* Upload success - text preview */}
+      {/* Upload success - collapsible text preview */}
       {uploadMutation.isSuccess && uploadPreview && (
-        <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-          <div className="flex items-center gap-2 mb-2">
-            <CheckCircle size={16} className="text-green-600" />
-            <span className="text-sm font-medium text-green-700">Text extracted successfully</span>
-          </div>
-          <p className="text-xs text-gray-500 font-mono whitespace-pre-wrap leading-relaxed">
-            {uploadPreview}
-          </p>
+        <div className="mt-4 bg-green-50 border border-green-200 rounded-lg overflow-hidden">
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-green-100 transition"
+            onClick={() => setPreviewExpanded((v) => !v)}
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle size={16} className="text-green-600 shrink-0" />
+              <span className="text-sm font-medium text-green-700">Text extracted successfully - click to {previewExpanded ? 'collapse' : 'expand'}</span>
+            </div>
+            {previewExpanded
+              ? <ChevronUp size={16} className="text-green-600 shrink-0" />
+              : <ChevronDown size={16} className="text-green-600 shrink-0" />
+            }
+          </button>
+          {previewExpanded && (
+            <div className="px-4 pb-4">
+              <p className="text-xs text-gray-500 font-mono whitespace-pre-wrap leading-relaxed">
+                {uploadPreview}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
