@@ -1,12 +1,14 @@
 import os
 import httpx
 from dotenv import load_dotenv
+from database import SessionLocal
+from models import Setting
 
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "llama-3.1-8b-instant"
+DEFAULT_MODEL = "llama-3.1-8b-instant"
 
 PROMPT = """
 You are a career advisor. Read the resume below and produce a concise structured summary
@@ -41,14 +43,26 @@ RESUME:
 """
 
 
+def _get_summariser_model() -> str:
+    try:
+        db = SessionLocal()
+        row = db.query(Setting).filter(Setting.key == "summariser_model").first()
+        return row.value if row else DEFAULT_MODEL
+    except Exception:
+        return DEFAULT_MODEL
+    finally:
+        db.close()
+
+
 async def summarise_resume(resume_text: str) -> str:
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY not set in .env")
 
-    prompt = PROMPT.format(resume_text=resume_text[:8000])  # stay within token limits
+    model = _get_summariser_model()
+    prompt = PROMPT.format(resume_text=resume_text[:8000])
 
     payload = {
-        "model": MODEL,
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 600,

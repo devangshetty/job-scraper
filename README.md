@@ -1,105 +1,143 @@
-# job-scraper
+# Job Scraper & Matcher
 
-Scrapes Seek.com.au, iWorkForSA, and Indeed (au.indeed.com) for software engineering roles in Adelaide and scores them against a resume using TF-IDF + cosine similarity.
+A local web app that scrapes software engineering jobs from Seek, Indeed, and iWorkForSA, scores them against your resume using TF-IDF, and runs AI-powered gap analysis via Groq.
 
 ## Stack
 
-- **Backend:** FastAPI, SQLAlchemy, SQLite, Playwright, playwright-stealth, scikit-learn
-- **Frontend:** React, TypeScript, Vite, TailwindCSS, TanStack Query, React Router
+| Layer | Technology |
+|-------|------------|
+| Frontend | React + TypeScript + Vite + Tailwind CSS |
+| Backend | FastAPI + SQLAlchemy + SQLite |
+| Scraping | Playwright (Seek, iWorkForSA), metadata-only (Indeed) |
+| Matching | TF-IDF via scikit-learn |
+| AI | Groq API (Llama / Mixtral / Gemma models) |
+| PDF parsing | pdfplumber |
+
+## Prerequisites
+
+- Python 3.9+
+- Node.js 18+
+- Playwright browsers installed
+- A free [Groq API key](https://console.groq.com)
 
 ## Setup
 
-> **Two terminals are required.** The backend and frontend are separate processes that must both be running at the same time.
-
-### Terminal 1 - Backend
-
-> **macOS:** Use `python3` instead of `python`. After the venv activates, `python` and `pip` work without the suffix.
-
+### 1. Clone
 ```bash
-cd backend
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium
-uvicorn main:app --reload --port 8000
+git clone https://github.com/devangshetty/job-scraper.git
+cd job-scraper
 ```
 
-Leave this terminal running. API docs available at http://localhost:8000/docs
+### 2. Backend
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
+```
 
-### Terminal 2 - Frontend
+Create `backend/.env`:
+```
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
+```
 
+Start the backend:
+```bash
+uvicorn main:app --reload
+```
+API runs at `http://localhost:8000`
+
+### 3. Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
+UI runs at `http://localhost:5173`
 
-Leave this terminal running. App available at http://localhost:3000
+## Features
 
-## Usage
+### Dashboard
+- Scrape controls for Seek, iWorkForSA, and Indeed with live status indicators
+- Stats tiles: total jobs, applied count, high match count, average score
+- Per-source clear and re-score buttons
 
-1. Open http://localhost:3000
-2. Go to the **Dashboard** and click **Run Now** on any scrape card
-3. The scrape runs in the background - you can navigate freely while it runs
-4. Jobs appear in **Job Listings** once complete, sorted by match score
-5. Use the source tabs (All / Seek / Indeed / iWorkForSA) to filter by site
-6. Click any job to view matched/missing skills, description, add notes, and mark as applied
-7. After a scrape, click **Re-score** on the card to re-run TF-IDF scoring on all jobs that have a description
-8. Browser back button returns you to the exact tab, filters, and page you were on
+### Job Listings
+- Filter by source, applied status, minimum match score
+- Sort by match score, date scraped, or title
+- Paginated job cards with matched/missing skill chips
 
-## Scrape Sources
+### Job Detail
+- Full job description with matched and missing skills
+- **AI Gap Analysis** - select a Groq model and run analysis in one click:
+  - What you have
+  - What you are missing
+  - What to highlight in your cover letter
+  - Red flags (clearance requirements, niche stack, etc.)
+  - Overall verdict: Strong / Good / Partial / Weak Match
+- Notes field per job
+- Mark as Applied toggle
 
-| Source | What it scrapes | Approx time |
-|--------|----------------|-------------|
-| Seek | Software Engineer, Full Stack Developer, Java Developer, React Developer in Adelaide - 3 pages each | 20-30 min |
-| iWorkForSA | ICT category from the SA Government jobs board | 5-10 min |
-| Indeed | Software Engineer, Full Stack Developer, Java Developer, React Developer in Adelaide SA - 3 pages each | 20-40 min |
+### Resume Page
+- Upload resume PDF (max 3 MB, PDF only, magic-byte validated)
+- Full extracted text viewer (collapsible)
+- One-click Groq summarisation - generates a structured profile stored in SQLite
+- The stored summary is automatically used as context for all gap analyses
+- Re-generate summary at any time
+- **Summariser model selector** - choose between 8B (fast) or 70B (best quality)
 
-Delays between requests are intentional to avoid bot detection. Each scrape source is fully decoupled - you can run them independently.
+## Model Selection
 
-## Dashboard
+Two independent model settings, both persisted in the local DB:
 
-The Dashboard has three scrape cards, one per source. Each card shows:
+| Setting | Where to change | Default |
+|---------|----------------|---------|
+| Gap analysis model | Job Detail page (dropdown next to Run Analysis) | Llama 3.1 8B |
+| Summariser model | Resume page (radio buttons) | Llama 3.1 8B |
 
-- **Job count** - how many jobs from that source are currently in the database
-- **Run Now** - triggers a background scrape for that source
-- **Re-score** - re-runs TF-IDF scoring on all jobs from that source that have a description; useful after a fresh scrape populates descriptions
-- **Clear Jobs** - deletes all jobs from that source (requires a second confirmation click showing the exact count, e.g. "Delete 87 jobs?")
-- **Last run result** - how many jobs were found and how many were new
+Available models: `llama-3.1-8b-instant`, `llama-3.3-70b-versatile`, `llama-3.1-70b-versatile`, `mixtral-8x7b-32768`, `gemma2-9b-it`
 
-## Job Listings
+## Project Structure
 
-- Filter by source tab, search by title/company, sort by score or date scraped
-- Filter by applied status and minimum match score
-- All filters and pagination are reflected in the URL - sharing or bookmarking a URL preserves the exact view
-- Browser back/forward buttons work correctly when navigating into and out of job detail pages
-- Jobs with no description show a warning banner instead of a misleading missing skills list
-
-## Score Thresholds
-
-| Score | Meaning |
-|-------|---------|
-| 70%+  | Strong match |
-| 50-70%| Worth reviewing |
-| <50%  | Likely not relevant |
-
-## Updating Skills
-
-Edit `backend/matcher/resume_skills.py` to keep the skill list in sync with your resume. The `SKILLS` list drives keyword matching. The `SYNONYMS` dict maps alternate terms (e.g. `springboot` to `spring boot`) so variants in job ads are counted correctly.
-
-## Indeed Scraping Notes
-
-Indeed uses Cloudflare bot detection on both search and detail pages. The scraper handles this two ways:
-
-- **playwright-stealth** patches ~20 headless browser fingerprints (canvas, WebGL, plugins, `navigator.webdriver`, `window.chrome`, etc.) so headless Chromium is indistinguishable from a real browser session
-- **Direct `viewjob?jk=` navigation** - the scraper collects all job keys (`data-jk`) from the search results page, then navigates directly to each `au.indeed.com/viewjob?jk=<id>` URL on a separate page. This avoids the card-click DOM mutation problem entirely
-
-Each keyword gets a fresh browser context to reset session state. If Indeed blocks a keyword mid-run it is skipped gracefully and the rest continue.
-
-## Getting Updates
-
-```bash
-git pull
-pip install -r requirements.txt
+```
+job-scraper/
+├── backend/
+│   ├── main.py                  # FastAPI app, router registration
+│   ├── models.py                # SQLAlchemy ORM models + Pydantic schemas
+│   ├── database.py              # SQLite engine + session
+│   ├── requirements.txt
+│   ├── .env                     # GROQ_API_KEY (not committed)
+│   ├── routers/
+│   │   ├── jobs.py              # Job CRUD, stats, rescore, purge
+│   │   ├── scrape.py            # Scrape triggers + status
+│   │   ├── llm.py               # Gap analysis endpoint
+│   │   ├── resume.py            # PDF upload, text extraction, summarise
+│   │   └── settings.py          # Model selection (gap + summariser)
+│   ├── llm/
+│   │   ├── groq_client.py       # Gap analysis Groq call, reads resume summary from DB
+│   │   └── resume_summariser.py # Resume summarisation Groq call
+│   ├── scraper/
+│   │   ├── seek_scraper.py
+│   │   ├── iworkforsa_scraper.py
+│   │   └── indeed_scraper.py
+│   └── matcher/
+│       └── tfidf_matcher.py
+└── frontend/
+    ├── src/
+    │   ├── App.tsx              # Routes + sidebar nav
+    │   ├── api/client.ts        # All API calls
+    │   └── components/
+    │       ├── Dashboard.tsx
+    │       ├── JobList.tsx
+    │       ├── JobDetail.tsx    # Includes GapAnalysisPanel
+    │       └── ResumePage.tsx   # Upload, summary, summariser model selector
+    └── package.json
 ```
 
-Restart the backend after pulling. The frontend dev server hot-reloads automatically.
+## Notes
+
+- Indeed scraping is metadata-only due to bot protection. Gap analysis is disabled for Indeed jobs since there is no full description to analyse.
+- The resume summary is generated once and reused. Re-generate after uploading a new resume version.
+- All data is stored locally in `backend/jobs.db`. Nothing is sent anywhere except Groq API calls.
+- `.env` is gitignored. Never commit your API key.

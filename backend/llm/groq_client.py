@@ -11,23 +11,11 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "llama-3.1-8b-instant"
 
-RESUME_SKILLS = """
-Languages: JavaScript, TypeScript, Java, Python, Ruby, PHP
-Frameworks: React, Angular, Node.js, Spring Boot, FastAPI
-Backend: REST APIs, Spring Boot, FastAPI, Maven, Gradle
-Databases: SQL, Oracle, MySQL, PostgreSQL, SQLite
-DevOps: Jenkins, Kubernetes, Docker, Azure, Git, CI/CD
-Testing: Postman, PHPUnit, automated testing, JUnit
-Tools: Splunk, Kibana, Mirth Connect, n8n, LangChain
-Domain: Web applications, REST integration, ETL, ML workflows
-Soft skills: Agile, Scrum, cross-functional teams
-"""
-
 PROMPT_TEMPLATE = """
 You are a professional career advisor helping a software engineer evaluate a job description against their resume.
 
-Resume Skills Profile:
-{resume_skills}
+Resume Summary:
+{resume_context}
 
 Job Title: {job_title}
 Company: {company}
@@ -52,9 +40,20 @@ Rules:
 - Return ONLY the JSON object, no markdown fences, no extra text
 """
 
+FALLBACK_SKILLS = """
+Languages: JavaScript, TypeScript, Java, Python, Ruby, PHP
+Frameworks: React, Angular, Node.js, Spring Boot, FastAPI
+Backend: REST APIs, Spring Boot, FastAPI, Maven, Gradle
+Databases: SQL, Oracle, MySQL, PostgreSQL, SQLite
+DevOps: Jenkins, Kubernetes, Docker, Azure, Git, CI/CD
+Testing: Postman, PHPUnit, automated testing, JUnit
+Tools: Splunk, Kibana, Mirth Connect, n8n, LangChain
+Domain: Web applications, REST integration, ETL, ML workflows
+Soft skills: Agile, Scrum, cross-functional teams
+"""
 
-def _get_active_model() -> str:
-    """Read the currently selected model from the settings table."""
+
+def _get_gap_model() -> str:
     try:
         db = SessionLocal()
         row = db.query(Setting).filter(Setting.key == "groq_model").first()
@@ -65,14 +64,29 @@ def _get_active_model() -> str:
         db.close()
 
 
+def _get_resume_context() -> str:
+    """Use stored LLM summary if available, otherwise fall back to hardcoded skills."""
+    try:
+        db = SessionLocal()
+        row = db.query(Setting).filter(Setting.key == "resume_summary").first()
+        if row and row.value and len(row.value.strip()) > 100:
+            return row.value.strip()
+        return FALLBACK_SKILLS.strip()
+    except Exception:
+        return FALLBACK_SKILLS.strip()
+    finally:
+        db.close()
+
+
 async def run_gap_analysis(job_title: str, company: str, job_description: str) -> dict:
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY not set in .env")
 
-    model = _get_active_model()
+    model          = _get_gap_model()
+    resume_context = _get_resume_context()
 
     prompt = PROMPT_TEMPLATE.format(
-        resume_skills=RESUME_SKILLS.strip(),
+        resume_context=resume_context,
         job_title=job_title,
         company=company,
         job_description=job_description[:6000],

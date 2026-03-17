@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchJob, updateJob } from '../api/client';
-import { ArrowLeft, ExternalLink, CheckCircle, Circle } from 'lucide-react';
+import { fetchJob, updateJob, runGapAnalysis, fetchGapModelSettings, setGapModel } from '../api/client';
+import { ArrowLeft, ExternalLink, CheckCircle, Circle, Zap, AlertTriangle, Info, Lightbulb, ChevronDown } from 'lucide-react';
 
 function parseSkills(raw: string | string[]): string[] {
   if (Array.isArray(raw)) return raw;
@@ -17,6 +17,175 @@ function applyButtonLabel(source: string | null | undefined): string {
     case 'seek':       return 'Apply on Seek';
     default:           return 'Apply Now';
   }
+}
+
+const VERDICT_STYLES: Record<string, string> = {
+  'Strong Match':  'bg-green-100 text-green-700 border-green-300',
+  'Good Match':    'bg-blue-100 text-blue-700 border-blue-300',
+  'Partial Match': 'bg-yellow-100 text-yellow-700 border-yellow-300',
+  'Weak Match':    'bg-red-100 text-red-600 border-red-300',
+}
+
+function GapAnalysisPanel({ jobId }: { jobId: number }) {
+  const qc = useQueryClient()
+  const [result, setResult] = useState<Record<string, unknown> | null>(null)
+  const [selectedModel, setSelectedModel] = useState<string | null>(null)
+
+  const { data: modelData } = useQuery({
+    queryKey: ['gapModel'],
+    queryFn:  fetchGapModelSettings,
+    staleTime: 30_000,
+  })
+
+  const activeModel = selectedModel ?? modelData?.current_model ?? 'llama-3.1-8b-instant'
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      // persist the chosen model then run analysis
+      if (selectedModel && selectedModel !== modelData?.current_model) {
+        await setGapModel(selectedModel)
+        qc.invalidateQueries({ queryKey: ['gapModel'] })
+      }
+      return runGapAnalysis(jobId)
+    },
+    onSuccess: (data) => setResult(data),
+  })
+
+  const running = mutation.isPending
+  const error   = mutation.error?.message ?? null
+
+  const verdictStyle = result
+    ? (VERDICT_STYLES[(result.match_verdict as string)] ?? 'bg-gray-100 text-gray-600 border-gray-300')
+    : ''
+
+  return (
+    <div className="mt-6 border border-gray-200 rounded-xl overflow-hidden">
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+        <div className="flex items-center gap-2">
+          <Zap size={15} className="text-indigo-500" />
+          <span className="text-sm font-semibold text-gray-700">AI Gap Analysis</span>
+          {result && (
+            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${verdictStyle}`}>
+              {result.match_verdict as string}
+            </span>
+          )}
+        </div>
+
+        {/* Model dropdown */}
+        {modelData && (
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <select
+                value={activeModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 pr-6 bg-white text-gray-600 appearance-none cursor-pointer hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              >
+                {modelData.available_models.map((m: { id: string; label: string }) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+              <ChevronDown size={12} className="absolute right-1.5 top-2 text-gray-400 pointer-events-none" />
+            </div>
+            <button
+              onClick={() => mutation.mutate()}
+              disabled={running}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
+            >
+              {running ? 'Analysing...' : result ? 'Re-run' : 'Run Analysis'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="px-4 py-3 bg-red-50 text-sm text-red-600 border-b border-red-200">
+          {error}
+        </div>
+      )}
+
+      {/* Loading state */}
+      {running && (
+        <div className="px-4 py-6 text-center text-sm text-gray-400">
+          Calling Groq API - usually takes 2-5 seconds...
+        </div>
+      )}
+
+      {/* Results */}
+      {result && !running && (
+        <div className="p-4 flex flex-col gap-4">
+
+          {/* Summary */}
+          <p className="text-sm text-gray-700 leading-relaxed">{result.summary as string}</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* You have */}
+            <div>
+              <p className="text-xs font-semibold text-green-700 flex items-center gap-1 mb-1.5">
+                <CheckCircle size={12} /> You have
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {(result.you_have as string[]).map(s => (
+                  <span key={s} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded">{s}</span>
+                ))}
+              </div>
+            </div>
+
+            {/* Missing */}
+            <div>
+              <p className="text-xs font-semibold text-red-600 flex items-center gap-1 mb-1.5">
+                <AlertTriangle size={12} /> You are missing
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {(result.you_are_missing as string[]).map(s => (
+                  <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded">{s}</span>
+                ))}
+                {(result.you_are_missing as string[]).length === 0 && (
+                  <span className="text-xs text-gray-400">Nothing significant</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* You can claim */}
+          {(result.you_can_claim as string[]).length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-blue-600 flex items-center gap-1 mb-1.5">
+                <Lightbulb size={12} /> Highlight in cover letter
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {(result.you_can_claim as string[]).map(s => (
+                  <span key={s} className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded">{s}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Red flags */}
+          {(result.red_flags as string[]).length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-orange-600 flex items-center gap-1 mb-1.5">
+                <Info size={12} /> Red flags
+              </p>
+              <ul className="list-disc list-inside">
+                {(result.red_flags as string[]).map(s => (
+                  <li key={s} className="text-xs text-orange-700">{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!result && !running && !error && (
+        <div className="px-4 py-6 text-center text-sm text-gray-400">
+          Select a model and click Run Analysis to get an AI-powered gap analysis for this job.
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function JobDetail() {
@@ -48,7 +217,7 @@ export default function JobDetail() {
 
   const matchedSkills = parseSkills(job.matched_skills);
   const missingSkills = parseSkills(job.missing_skills);
-  const isIndeed = job.source === 'indeed';
+  const isIndeed      = job.source === 'indeed';
   const hasDescription = !!job.description && job.description.length > 80;
 
   const scoreColor = !job.match_score ? 'text-gray-400' :
@@ -66,15 +235,15 @@ export default function JobDetail() {
         className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-4">
         <ArrowLeft size={14} /> Back
       </button>
+
       <div className="bg-white rounded-xl border p-6">
+        {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-gray-800">{job.job_title}</h1>
               {job.source && (
-                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
-                  {sourceLabel}
-                </span>
+                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{sourceLabel}</span>
               )}
             </div>
             <p className="text-gray-500">{job.company} &middot; {job.location}</p>
@@ -89,7 +258,6 @@ export default function JobDetail() {
           )}
         </div>
 
-        {/* Indeed metadata-only notice */}
         {isIndeed && (
           <div className="mb-5 p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-700">
@@ -99,7 +267,6 @@ export default function JobDetail() {
           </div>
         )}
 
-        {/* Skills section - only show if there is enough description to be meaningful */}
         {!isIndeed && (
           hasDescription ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
@@ -127,7 +294,6 @@ export default function JobDetail() {
             <div className="mb-5 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
               <p className="text-sm text-yellow-700">
                 No description was scraped for this job. Skills and match score may not be accurate.
-                Use Re-score on the Dashboard after a fresh scrape.
               </p>
             </div>
           )
@@ -142,7 +308,12 @@ export default function JobDetail() {
           </div>
         </div>
 
-        <div className="mb-5">
+        {/* Gap Analysis Panel - skip for Indeed (no full JD) */}
+        {!isIndeed && hasDescription && (
+          <GapAnalysisPanel jobId={jobId} />
+        )}
+
+        <div className="mt-6 mb-5">
           <p className="text-xs font-semibold text-gray-500 mb-1">Your Notes</p>
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
             placeholder="Add notes about this role..."

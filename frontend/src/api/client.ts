@@ -78,11 +78,21 @@ export const fetchResumeStatus = () =>
   api.get('/api/resume/status').then((r) => r.data)
 
 // --- Settings ---
-export const fetchModelSettings = () =>
-  api.get('/api/settings/model').then((r) => r.data)
+export const fetchGapModelSettings = () =>
+  api.get('/api/settings/model/gap').then((r) => r.data)
 
-export const setModel = (model_id: string) =>
-  api.post('/api/settings/model', { model_id }).then((r) => r.data)
+export const setGapModel = (model_id: string) =>
+  api.post('/api/settings/model/gap', { model_id }).then((r) => r.data)
+
+export const fetchSummariserModelSettings = () =>
+  api.get('/api/settings/model/summariser').then((r) => r.data)
+
+export const setSummariserModel = (model_id: string) =>
+  api.post('/api/settings/model/summariser', { model_id }).then((r) => r.data)
+
+// keep old names for any existing usage
+export const fetchModelSettings = fetchGapModelSettings
+export const setModel           = setGapModel
 
 // --- LLM ---
 export const runGapAnalysis = (jobId: number) =>

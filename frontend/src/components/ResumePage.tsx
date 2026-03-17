@@ -1,9 +1,15 @@
 import { useRef, useState } from 'react'
-import { uploadResume, summariseResume, fetchResumeStatus, fetchModelSettings, setModel } from '../api/client'
+import {
+  uploadResume, summariseResume, fetchResumeStatus,
+  fetchSummariserModelSettings, setSummariserModel,
+} from '../api/client'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { UploadCloud, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronDown, ChevronUp, Cpu } from 'lucide-react'
+import {
+  UploadCloud, FileText, CheckCircle, AlertCircle,
+  RefreshCw, ChevronDown, ChevronUp, Cpu,
+} from 'lucide-react'
 
-const MAX_MB = 3
+const MAX_MB    = 3
 const MAX_BYTES = MAX_MB * 1024 * 1024
 
 function CollapsibleText({ text, label }: { text: string; label: string }) {
@@ -22,8 +28,7 @@ function CollapsibleText({ text, label }: { text: string; label: string }) {
         </div>
         {expanded
           ? <ChevronUp size={16} className="text-green-600 shrink-0" />
-          : <ChevronDown size={16} className="text-green-600 shrink-0" />
-        }
+          : <ChevronDown size={16} className="text-green-600 shrink-0" />}
       </button>
       {expanded && (
         <div className="px-4 pb-4 max-h-96 overflow-y-auto">
@@ -36,20 +41,20 @@ function CollapsibleText({ text, label }: { text: string; label: string }) {
   )
 }
 
-function ModelSelector() {
+function SummariserModelSelector() {
   const qc = useQueryClient()
   const [saved, setSaved] = useState(false)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['modelSettings'],
-    queryFn: fetchModelSettings,
+    queryKey: ['summariserModel'],
+    queryFn: fetchSummariserModelSettings,
     staleTime: 0,
   })
 
   const mutation = useMutation({
-    mutationFn: (model_id: string) => setModel(model_id),
+    mutationFn: (model_id: string) => setSummariserModel(model_id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['modelSettings'] })
+      qc.invalidateQueries({ queryKey: ['summariserModel'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
@@ -61,7 +66,7 @@ function ModelSelector() {
     <div className="p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
       <div className="flex items-center gap-2 mb-3">
         <Cpu size={16} className="text-gray-500" />
-        <span className="text-sm font-semibold text-gray-700">Groq Model (used for gap analysis)</span>
+        <span className="text-sm font-semibold text-gray-700">Summariser Model</span>
         {saved && (
           <span className="ml-auto text-xs text-green-600 flex items-center gap-1">
             <CheckCircle size={12} /> Saved
@@ -80,7 +85,7 @@ function ModelSelector() {
           >
             <input
               type="radio"
-              name="groq_model"
+              name="summariser_model"
               value={m.id}
               checked={data.current_model === m.id}
               onChange={() => mutation.mutate(m.id)}
@@ -96,22 +101,22 @@ function ModelSelector() {
         ))}
       </div>
       <p className="mt-3 text-xs text-gray-400">
-        This setting is persisted locally. The resume summariser always uses the fast 8B model.
+        Used when you click Generate Resume Summary. Only runs once unless you re-generate.
       </p>
     </div>
   )
 }
 
 export default function ResumePage() {
-  const qc = useQueryClient()
+  const qc      = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
-  const [dragOver, setDragOver] = useState(false)
-  const [localError, setLocalError] = useState<string | null>(null)
+  const [dragOver,     setDragOver]     = useState(false)
+  const [localError,   setLocalError]   = useState<string | null>(null)
   const [uploadedText, setUploadedText] = useState<string | null>(null)
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['resumeStatus'],
-    queryFn: fetchResumeStatus,
+    queryFn:  fetchResumeStatus,
     staleTime: 0,
   })
 
@@ -125,41 +130,29 @@ export default function ResumePage() {
 
   const summariseMutation = useMutation({
     mutationFn: summariseResume,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['resumeStatus'] })
-    },
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['resumeStatus'] }),
   })
 
   function validateAndUpload(file: File) {
     setLocalError(null)
     setUploadedText(null)
-    if (file.type !== 'application/pdf') {
-      setLocalError('Only PDF files are accepted.')
-      return
-    }
-    if (file.size > MAX_BYTES) {
-      setLocalError(`File is too large. Maximum size is ${MAX_MB} MB.`)
-      return
-    }
+    if (file.type !== 'application/pdf') { setLocalError('Only PDF files are accepted.'); return }
+    if (file.size > MAX_BYTES)           { setLocalError(`File is too large. Max ${MAX_MB} MB.`); return }
     uploadMutation.mutate(file)
   }
 
   function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (file) validateAndUpload(file)
-    e.target.value = ''
+    const f = e.target.files?.[0]; if (f) validateAndUpload(f); e.target.value = ''
   }
 
   function onDrop(e: React.DragEvent) {
-    e.preventDefault()
-    setDragOver(false)
-    const file = e.dataTransfer.files?.[0]
-    if (file) validateAndUpload(file)
+    e.preventDefault(); setDragOver(false)
+    const f = e.dataTransfer.files?.[0]; if (f) validateAndUpload(f)
   }
 
   const uploading      = uploadMutation.isPending
   const summarising    = summariseMutation.isPending
-  const uploadError    = uploadMutation.error?.message ?? null
+  const uploadError    = uploadMutation.error?.message    ?? null
   const summariseError = summariseMutation.error?.message ?? null
   const rawTextToShow  = uploadedText ?? status?.raw_text ?? null
 
@@ -168,15 +161,13 @@ export default function ResumePage() {
       <h1 className="text-2xl font-bold text-gray-800 mb-1">Resume</h1>
       <p className="text-sm text-gray-500 mb-6">
         Upload your resume PDF. We extract the text, then use Groq to generate a structured summary
-        that is stored locally and used for all gap analyses.
+        stored locally and used for all gap analyses.
       </p>
 
       {/* Upload zone */}
       <div
         className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition ${
-          dragOver
-            ? 'border-blue-400 bg-blue-50'
-            : 'border-gray-300 bg-white hover:border-blue-300 hover:bg-gray-50'
+          dragOver ? 'border-blue-400 bg-blue-50' : 'border-gray-300 bg-white hover:border-blue-300 hover:bg-gray-50'
         }`}
         onClick={() => fileRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
@@ -188,13 +179,7 @@ export default function ResumePage() {
           {uploading ? 'Uploading...' : 'Click or drag and drop your resume PDF'}
         </p>
         <p className="text-xs text-gray-400 mt-1">PDF only, max {MAX_MB} MB</p>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="application/pdf"
-          className="hidden"
-          onChange={onFileChange}
-        />
+        <input ref={fileRef} type="file" accept="application/pdf" className="hidden" onChange={onFileChange} />
       </div>
 
       {(localError || uploadError) && (
@@ -222,8 +207,8 @@ export default function ResumePage() {
           {!status.has_summary && (
             <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
               <p className="text-sm text-yellow-800 mb-3">
-                No summary yet. Click below to send your resume to Groq and generate a structured profile.
-                This is a one-time call and the result is stored locally.
+                No summary yet. Click below to generate a structured profile via Groq.
+                Stored locally and reused for every gap analysis.
               </p>
               <button
                 onClick={() => summariseMutation.mutate()}
@@ -235,9 +220,7 @@ export default function ResumePage() {
                   : 'Generate Resume Summary'
                 }
               </button>
-              {summariseError && (
-                <p className="mt-2 text-xs text-red-600">{summariseError}</p>
-              )}
+              {summariseError && <p className="mt-2 text-xs text-red-600">{summariseError}</p>}
             </div>
           )}
 
@@ -263,7 +246,7 @@ export default function ResumePage() {
             </div>
           )}
 
-          <ModelSelector />
+          <SummariserModelSelector />
         </div>
       )}
     </div>
