@@ -2,7 +2,24 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchJobs } from '../api/client';
 import type { Job } from '../types';
-import { MapPin, Building2, DollarSign, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MapPin, Building2, DollarSign, Calendar, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
+
+function formatScrapedAt(raw: string): string {
+  if (!raw) return '';
+  const d = new Date(raw.endsWith('Z') ? raw : raw + 'Z');
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffMins < 1)   return 'just now';
+  if (diffMins < 60)  return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'yesterday';
+  if (diffDays < 7)   return `${diffDays}d ago`;
+  return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+}
 
 const SOURCE_TABS = [
   { key: 'all',        label: 'All Jobs' },
@@ -153,6 +170,11 @@ export default function JobList() {
                       {job.location    && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
                       {job.salary      && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
                       {job.posted_date && <span className="flex items-center gap-1"><Calendar size={13} />{job.posted_date}</span>}
+                      {sortBy === 'scraped_at' && job.scraped_at && (
+                        <span className="flex items-center gap-1 text-blue-500">
+                          <Clock size={13} />scraped {formatScrapedAt(job.scraped_at)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
