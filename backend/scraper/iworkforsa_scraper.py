@@ -194,7 +194,7 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
         return {}
 
 
-async def scrape_iworkforsa() -> List[Dict]:
+async def scrape_iworkforsa(should_stop=None) -> List[Dict]:
     all_jobs:  List[Dict] = []
     seen_urls: set        = set()
 
@@ -233,6 +233,9 @@ async def scrape_iworkforsa() -> List[Dict]:
             logger.info(f"iworkforsa: {len(new_cards)} jobs found")
 
             for job in new_cards:
+                if should_stop and should_stop():
+                    logger.info("iworkforsa: stop requested, halting detail fetches")
+                    break
                 detail = await _fetch_job_detail(page, job["application_url"])
                 if detail.get("description"):
                     job["description"] = detail["description"]

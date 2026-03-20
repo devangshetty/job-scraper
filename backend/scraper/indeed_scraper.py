@@ -143,9 +143,10 @@ async def _scrape_keyword_page(
 
 
 async def scrape_indeed(
-    keywords:  List[str],
-    location:  str = "Adelaide SA",
-    max_pages: int = 3,
+    keywords:    List[str],
+    location:    str = "Adelaide SA",
+    max_pages:   int = 3,
+    should_stop = None,
 ) -> List[Dict]:
     all_jobs: List[Dict] = []
     seen_jks: set        = set()
@@ -155,44 +156,55 @@ async def scrape_indeed(
 
     async with async_playwright() as pw:
         for keyword in keywords:
+            if should_stop and should_stop():
+                logger.info("Indeed: stop requested, halting keyword loop")
+                break
             browser = await pw.chromium.launch(
                 headless=True,
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
             )
-            context = await browser.new_context(
-                user_agent=random.choice(USER_AGENTS),
-                viewport={"width": 1366, "height": 768},
-                locale="en-AU",
-                timezone_id="Australia/Adelaide",
-                extra_http_headers={
-                    "Accept-Language": "en-AU,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                }
-            )
-            await context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
+            try:
+                context = await browser.new_context(
+                    user_agent=random.choice(USER_AGENTS),
+                    viewport={"width": 1366, "height": 768},
+                    locale="en-AU",
+                    timezone_id="Australia/Adelaide",
+                    extra_http_headers={
+                        "Accept-Language": "en-AU,en;q=0.9",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    }
+                )
+                await context.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+                )
 
-            for page_num in range(max_pages):
-                offset = page_num * 10
-                url = _build_search_url(keyword, location, offset)
-                logger.info(f"Indeed: scraping '{keyword}' page {page_num + 1}: {url}")
+                for page_num in range(max_pages):
+                    if should_stop and should_stop():
+                        logger.info("Indeed: stop requested, halting page loop")
+                        break
+                    offset = page_num * 10
+                    url = _build_search_url(keyword, location, offset)
+                    logger.info(f"Indeed: scraping '{keyword}' page {page_num + 1}: {url}")
 
-                page_jobs = await _scrape_keyword_page(context, url, seen_jks)
+                    page_jobs = await _scrape_keyword_page(context, url, seen_jks)
 
-                if page_jobs is None:
-                    logger.warning(f"Indeed: '{keyword}' blocked - stopping keyword")
-                    break
+                    if page_jobs is None:
+                        logger.warning(f"Indeed: '{keyword}' blocked - stopping keyword")
+                        break
 
-                all_jobs.extend(page_jobs)
-                logger.info(f"Indeed: '{keyword}' page {page_num + 1}: {len(page_jobs)} jobs, total={len(all_jobs)}")
+                    all_jobs.extend(page_jobs)
+                    logger.info(f"Indeed: '{keyword}' page {page_num + 1}: {len(page_jobs)} jobs, total={len(all_jobs)}")
 
-                if len(page_jobs) == 0:
-                    break
+                    if len(page_jobs) == 0:
+                        break
 
-                await asyncio.sleep(random.uniform(4.0, 7.0))
+                    if not (should_stop and should_stop()):
+                        await asyncio.sleep(random.uniform(4.0, 7.0))
+            finally:
+                await browser.close()
 
-            await browser.close()
+            if should_stop and should_stop():
+                break
             await asyncio.sleep(random.uniform(4.0, 7.0))
 
     logger.info(f"Indeed: done, {len(all_jobs)} total jobs")

@@ -58,6 +58,9 @@ export const scrapeIWorkForSA = () =>
 export const fetchScrapeStatus = () =>
   api.get('/api/scrape/status').then((r) => r.data)
 
+export const stopScrape = (source: string) =>
+  api.post(`/api/scrape/stop/${source}`).then((r) => r.data)
+
 export const triggerSeekScrape       = scrapeSeek
 export const triggerIndeedScrape     = scrapeIndeed
 export const triggerIworkforsaScrape = scrapeIWorkForSA

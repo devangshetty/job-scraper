@@ -45,7 +45,9 @@ def list_jobs(
         q = q.filter(Job.source == source)
 
     sort_col = getattr(Job, sort_by, Job.match_score)
-    q = q.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
+    primary_order = sort_col.desc() if sort_order == "desc" else sort_col.asc()
+    # Secondary sort by id ensures stable ordering within ties (e.g. same scraped_at timestamp)
+    q = q.order_by(primary_order, Job.id.desc())
 
     total = q.count()
     jobs  = q.offset((page - 1) * page_size).limit(page_size).all()

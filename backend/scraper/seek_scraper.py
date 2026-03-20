@@ -130,9 +130,10 @@ async def _fetch_job_description(page, job_url: str) -> tuple:
 
 
 async def scrape_seek(
-    keywords:  List[str],
-    location:  str = "Adelaide",
-    max_pages: int = 3,
+    keywords:    List[str],
+    location:    str = "Adelaide",
+    max_pages:   int = 3,
+    should_stop = None,
 ) -> List[Dict]:
     all_jobs: List[Dict] = []
     seen_urls: set = set()
@@ -146,7 +147,13 @@ async def scrape_seek(
         page = await context.new_page()
 
         for keyword in keywords:
+            if should_stop and should_stop():
+                logger.info("Seek: stop requested, halting keyword loop")
+                break
             for page_num in range(1, max_pages + 1):
+                if should_stop and should_stop():
+                    logger.info("Seek: stop requested, halting page loop")
+                    break
                 url = _build_search_url(keyword, location, page_num)
                 logger.info(f"Scraping: {url}")
 
@@ -166,6 +173,9 @@ async def scrape_seek(
                     seen_urls.add(c["application_url"])
 
                 for job in new_cards:
+                    if should_stop and should_stop():
+                        logger.info("Seek: stop requested, halting detail fetches")
+                        break
                     desc, date = await _fetch_job_description(page, job["application_url"])
                     job["description"] = desc
                     job["posted_date"] = date
@@ -173,7 +183,8 @@ async def scrape_seek(
 
                 all_jobs.extend(new_cards)
                 logger.info(f"Page {page_num}: {len(new_cards)} new jobs")
-                await asyncio.sleep(random.uniform(3.0, 6.0))
+                if not (should_stop and should_stop()):
+                    await asyncio.sleep(random.uniform(3.0, 6.0))
 
         await browser.close()
 

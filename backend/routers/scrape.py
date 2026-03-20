@@ -20,6 +20,9 @@ _indeed_running     = False
 _seek_last:         dict = {}
 _iworkforsa_last:   dict = {}
 _indeed_last:       dict = {}
+_seek_stop          = False
+_iworkforsa_stop    = False
+_indeed_stop        = False
 
 
 class IndeedScrapeRequest(BaseModel):
@@ -120,53 +123,67 @@ def _save_jobs(raw_jobs: list, source: str) -> dict:
 
 
 async def _run_seek(request: SeekScrapeRequest):
-    global _seek_running, _seek_last
+    global _seek_running, _seek_last, _seek_stop
     _seek_running = True
+    _seek_stop = False
     try:
         raw = await scrape_seek(
             keywords=request.keywords,
             location=request.location,
             max_pages=request.max_pages,
+            should_stop=lambda: _seek_stop,
         )
         _seek_last = _save_jobs(raw, "seek")
+        if _seek_stop:
+            _seek_last["stopped"] = True
         logger.info(f"Seek complete: {_seek_last}")
     except Exception as e:
         _seek_last = {"error": str(e)}
         logger.error(f"Seek scrape failed: {e}", exc_info=True)
     finally:
         _seek_running = False
+        _seek_stop = False
 
 
 async def _run_iworkforsa():
-    global _iworkforsa_running, _iworkforsa_last
+    global _iworkforsa_running, _iworkforsa_last, _iworkforsa_stop
     _iworkforsa_running = True
+    _iworkforsa_stop = False
     try:
-        raw = await scrape_iworkforsa()
+        raw = await scrape_iworkforsa(should_stop=lambda: _iworkforsa_stop)
         _iworkforsa_last = _save_jobs(raw, "iworkforsa")
+        if _iworkforsa_stop:
+            _iworkforsa_last["stopped"] = True
         logger.info(f"iworkforsa complete: {_iworkforsa_last}")
     except Exception as e:
         _iworkforsa_last = {"error": str(e)}
         logger.error(f"iworkforsa scrape failed: {e}", exc_info=True)
     finally:
         _iworkforsa_running = False
+        _iworkforsa_stop = False
 
 
 async def _run_indeed(request: IndeedScrapeRequest):
-    global _indeed_running, _indeed_last
+    global _indeed_running, _indeed_last, _indeed_stop
     _indeed_running = True
+    _indeed_stop = False
     try:
         raw = await scrape_indeed(
             keywords=request.keywords,
             location=request.location,
             max_pages=request.max_pages,
+            should_stop=lambda: _indeed_stop,
         )
         _indeed_last = _save_jobs(raw, "indeed")
+        if _indeed_stop:
+            _indeed_last["stopped"] = True
         logger.info(f"Indeed complete: {_indeed_last}")
     except Exception as e:
         _indeed_last = {"error": str(e)}
         logger.error(f"Indeed scrape failed: {e}", exc_info=True)
     finally:
         _indeed_running = False
+        _indeed_stop = False
 
 
 @router.post("/seek", response_model=ScrapeResponse)
@@ -191,6 +208,21 @@ async def trigger_indeed(request: IndeedScrapeRequest, background_tasks: Backgro
         return ScrapeResponse(scraped=0, scored=0, message="Indeed scrape already in progress.")
     background_tasks.add_task(_run_indeed, request)
     return ScrapeResponse(scraped=0, scored=0, message="Indeed scrape started.")
+
+
+@router.post("/stop/{source}")
+def stop_scrape(source: str):
+    global _seek_stop, _iworkforsa_stop, _indeed_stop
+    if source == "seek":
+        _seek_stop = True
+    elif source == "iworkforsa":
+        _iworkforsa_stop = True
+    elif source == "indeed":
+        _indeed_stop = True
+    else:
+        return {"ok": False, "error": f"Unknown source '{source}'"}
+    logger.info(f"Stop requested for '{source}'")
+    return {"ok": True, "source": source}
 
 
 @router.get("/status")

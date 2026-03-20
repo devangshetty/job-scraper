@@ -10,8 +10,9 @@ import {
   deleteJobsBySource,
   rescoreJobsBySource,
   fetchScrapeStatus,
+  stopScrape,
 } from '../api/client';
-import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader, Trash2, RefreshCw, ChevronRight } from 'lucide-react';
+import { Briefcase, CheckCircle, TrendingUp, Star, Play, Loader, Trash2, RefreshCw, ChevronRight, Square } from 'lucide-react';
 
 function LastRunBadge({ result }: { result: Record<string, unknown> }) {
   if ('error' in result) {
@@ -25,8 +26,14 @@ function LastRunBadge({ result }: { result: Record<string, unknown> }) {
     const found    = result.found    as number ?? 0
     const inserted = result.inserted as number ?? 0
     const skipped  = result.skipped  as number ?? 0
+    const stopped  = result.stopped  as boolean ?? false
     return (
-      <div className="mt-3 flex gap-3 text-xs">
+      <div className="mt-3 flex flex-wrap gap-2 text-xs items-center">
+        {stopped && (
+          <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded-lg font-medium">
+            stopped early
+          </span>
+        )}
         <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg">
           {found} found
         </span>
@@ -51,6 +58,7 @@ function ScrapeCard({
   isRunning,
   lastResult,
   onRun,
+  onStop,
   onClear,
   onRescore,
   onViewJobs,
@@ -63,6 +71,7 @@ function ScrapeCard({
   isRunning:   boolean;
   lastResult:  Record<string, unknown>;
   onRun:       () => void;
+  onStop:      () => void;
   onClear:     () => void;
   onRescore:   () => void;
   onViewJobs:  () => void;
@@ -108,14 +117,24 @@ function ScrapeCard({
       </div>
       <p className="text-sm text-gray-500 mb-4">{description}</p>
       <div className="flex flex-wrap gap-2">
-        <button
-          onClick={onRun}
-          disabled={isRunning || clearing || rescoring}
-          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition text-sm"
-        >
-          {isRunning ? <Loader size={15} className="animate-spin" /> : <Play size={15} />}
-          {isRunning ? 'Scraping...' : 'Run Now'}
-        </button>
+        {isRunning ? (
+          <button
+            onClick={onStop}
+            className="flex items-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition text-sm"
+          >
+            <Square size={15} />
+            Stop
+          </button>
+        ) : (
+          <button
+            onClick={onRun}
+            disabled={clearing || rescoring}
+            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition text-sm"
+          >
+            <Play size={15} />
+            Run Now
+          </button>
+        )}
         <button
           onClick={onRescore}
           disabled={isRunning || clearing || rescoring || jobCount === 0}
@@ -143,7 +162,8 @@ function ScrapeCard({
       </div>
       {isRunning && (
         <p className="mt-3 text-sm text-blue-600 bg-blue-50 rounded p-2">
-          Running in the background. You can navigate freely.
+          <Loader size={13} className="animate-spin inline mr-1" />
+          Running… Jobs found so far will be saved if you stop.
         </p>
       )}
       {!isRunning && Object.keys(lastResult).length > 0 && (
@@ -218,6 +238,17 @@ export default function Dashboard() {
   const rescoreGovM    = makeRescoreMutation('iworkforsa');
   const rescoreIndeedM = makeRescoreMutation('indeed');
 
+  function makeStopMutation(source: string) {
+    return useMutation({
+      mutationFn: () => stopScrape(source),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ['scrapeStatus'] }),
+    });
+  }
+
+  const stopSeekM     = makeStopMutation('seek');
+  const stopGovM      = makeStopMutation('iworkforsa');
+  const stopIndeedM   = makeStopMutation('indeed');
+
   const tiles = [
     { label: 'Total Jobs',  value: stats?.total_jobs ?? 0,                           icon: Briefcase,   color: 'bg-blue-50 text-blue-600',   href: '/jobs' },
     { label: 'Applied',     value: stats?.applied_count ?? 0,                        icon: CheckCircle, color: 'bg-green-50 text-green-600',  href: '/jobs?applied=applied' },
@@ -249,6 +280,7 @@ export default function Dashboard() {
           isRunning={scrapeStatus?.seek.running ?? false}
           lastResult={scrapeStatus?.seek.last_result ?? {}}
           onRun={() => seekM.mutate()}
+          onStop={() => stopSeekM.mutate()}
           onClear={() => clearSeekM.mutate()}
           onRescore={() => rescoreSeekM.mutate()}
           onViewJobs={() => navigate('/jobs?source=seek')}
@@ -262,6 +294,7 @@ export default function Dashboard() {
           isRunning={scrapeStatus?.iworkforsa.running ?? false}
           lastResult={scrapeStatus?.iworkforsa.last_result ?? {}}
           onRun={() => govM.mutate()}
+          onStop={() => stopGovM.mutate()}
           onClear={() => clearGovM.mutate()}
           onRescore={() => rescoreGovM.mutate()}
           onViewJobs={() => navigate('/jobs?source=iworkforsa')}
@@ -275,6 +308,7 @@ export default function Dashboard() {
           isRunning={scrapeStatus?.indeed?.running ?? false}
           lastResult={scrapeStatus?.indeed?.last_result ?? {}}
           onRun={() => indeedM.mutate()}
+          onStop={() => stopIndeedM.mutate()}
           onClear={() => clearIndeedM.mutate()}
           onRescore={() => rescoreIndeedM.mutate()}
           onViewJobs={() => navigate('/jobs?source=indeed')}
