@@ -1,9 +1,19 @@
 import asyncio
 import random
 import logging
+from urllib.parse import urlparse, urlunparse
 from typing import List, Dict
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 from scraper.parser import clean_text, parse_salary
+
+
+def _canonical_seek_url(url: str) -> str:
+    """Strip tracking query params and fragment, keep only /job/{id} path."""
+    try:
+        p = urlparse(url)
+        return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+    except Exception:
+        return url
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +86,8 @@ async def _extract_job_cards(page) -> List[Dict]:
             if not href:
                 continue
 
-            job_url = href if href.startswith("http") else BASE_URL + href
+            raw_url = href if href.startswith("http") else BASE_URL + href
+            job_url = _canonical_seek_url(raw_url)
 
             jobs.append({
                 "job_title":       title.strip(),

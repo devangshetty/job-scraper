@@ -1,5 +1,6 @@
 import logging
 import uuid
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from fastapi import APIRouter, BackgroundTasks
 from sqlalchemy import text
 from database import SessionLocal, engine
@@ -10,6 +11,27 @@ from scraper.indeed_scraper import scrape_indeed
 from matcher.tfidf_matcher import score_jobs_batch
 from pydantic import BaseModel
 from typing import List
+
+
+def _normalize_url(url: str, source: str) -> str:
+    """Strip tracking params/fragments so the same job always gets the same URL."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        if source == "seek":
+            # Only the path matters: https://www.seek.com.au/job/{id}
+            return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+        elif source == "indeed":
+            # Only the jk param matters: https://au.indeed.com/viewjob?jk={jobkey}
+            jk = parse_qs(parsed.query).get("jk", [""])[0]
+            query = urlencode({"jk": jk}) if jk else parsed.query
+            return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", query, ""))
+        else:
+            # iWorkForSA etc: strip fragment only
+            return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ""))
+    except Exception:
+        return url
 
 router = APIRouter(prefix="/api/scrape", tags=["scrape"])
 logger = logging.getLogger(__name__)
@@ -45,7 +67,8 @@ def _save_jobs(raw_jobs: list, source: str) -> dict:
         seen_in_batch = set()
 
         for j in raw_jobs:
-            url = (j.get("application_url") or "").strip()
+            url = _normalize_url((j.get("application_url") or "").strip(), source)
+            j["application_url"] = url
 
             # skip missing / javascript: URLs
             if not url or url.lower().startswith("javascript"):
