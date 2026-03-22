@@ -54,18 +54,20 @@ cd frontend
 npm install
 npm run dev
 ```
-UI runs at `http://localhost:5173`
+UI runs at `http://localhost:5174`
 
 ## Features
 
 ### Dashboard
 - Scrape controls for Seek, iWorkForSA, and Indeed with live status indicators
+- **Stop button** per source — cancels a running scrape at the next natural break point; jobs collected so far are saved to the DB
 - Stats tiles: total jobs, applied count, high match count, average score
 - Per-source clear and re-score buttons
+- Last-run badge shows found / new / skipped counts, and flags if the scrape was stopped early
 
 ### Job Listings
 - Filter by source, applied status, minimum match score
-- Sort by match score, date scraped, or title
+- Sort by match score or date scraped — when sorting by date, each card shows a `scraped X ago` timestamp
 - Paginated job cards with matched/missing skill chips
 
 ### Job Detail
@@ -96,7 +98,7 @@ Two independent model settings, both persisted in the local DB:
 | Gap analysis model | Job Detail page (dropdown next to Run Analysis) | Llama 3.1 8B |
 | Summariser model | Resume page (radio buttons) | Llama 3.1 8B |
 
-Available models: `llama-3.1-8b-instant`, `llama-3.3-70b-versatile`, `llama-3.1-70b-versatile`, `mixtral-8x7b-32768`, `gemma2-9b-it`
+Available models: `llama-3.1-8b-instant`, `llama-3.3-70b-versatile`
 
 ## Project Structure
 
@@ -120,9 +122,11 @@ job-scraper/
 │   ├── scraper/
 │   │   ├── seek_scraper.py
 │   │   ├── iworkforsa_scraper.py
-│   │   └── indeed_scraper.py
+│   │   ├── indeed_scraper.py
+│   │   └── parser.py            # HTML cleaning, salary parsing
 │   └── matcher/
-│       └── tfidf_matcher.py
+│       ├── tfidf_matcher.py     # TF-IDF scoring + skill extraction
+│       └── resume_skills.py     # Hardcoded skill list, synonyms, resume text
 └── frontend/
     ├── src/
     │   ├── App.tsx              # Routes + sidebar nav
@@ -141,3 +145,5 @@ job-scraper/
 - The resume summary is generated once and reused. Re-generate after uploading a new resume version.
 - All data is stored locally in `backend/jobs.db`. Nothing is sent anywhere except Groq API calls.
 - `.env` is gitignored. Never commit your API key.
+- Seek URLs are normalised to `https://www.seek.com.au/job/{id}` before storage — tracking params and the random `#sol=` fragment are stripped so the same job is never inserted twice across scrape runs.
+- Skills and synonyms are hardcoded in `backend/matcher/resume_skills.py`. Edit that file to tailor scoring to your own resume.
