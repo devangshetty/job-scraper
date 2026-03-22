@@ -100,3 +100,7 @@ export const setModel           = setGapModel
 // --- LLM ---
 export const runGapAnalysis = (jobId: number) =>
   api.post(`/api/llm/gap-analysis/${jobId}`).then((r) => r.data)
+
+// --- Agent ---
+export const agentSearch = (q: string, maxResults = 6) =>
+  api.get('/api/agent/search', { params: { q, max_results: maxResults } }).then((r) => r.data)

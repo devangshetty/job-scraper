@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchJob, updateJob, runGapAnalysis, fetchGapModelSettings, setGapModel } from '../api/client';
-import { ArrowLeft, ExternalLink, CheckCircle, Circle, Zap, AlertTriangle, Info, Lightbulb, ChevronDown } from 'lucide-react';
+import { fetchJob, updateJob, runGapAnalysis, fetchGapModelSettings, setGapModel, agentSearch } from '../api/client';
+import { ArrowLeft, ExternalLink, CheckCircle, Circle, Zap, AlertTriangle, Info, Lightbulb, ChevronDown, Users, Loader } from 'lucide-react';
 
 function parseSkills(raw: string | string[]): string[] {
   if (Array.isArray(raw)) return raw;
@@ -188,6 +188,121 @@ function GapAnalysisPanel({ jobId }: { jobId: number }) {
   )
 }
 
+interface SearchResult {
+  title:   string;
+  url:     string;
+  snippet: string;
+}
+
+function parseContact(result: SearchResult): { name: string; role: string } {
+  // Bing titles come as "Name - Role at Company | LinkedIn"
+  const withoutLinkedIn = result.title.replace(/\s*\|\s*LinkedIn.*$/i, '').trim();
+  const dashIdx = withoutLinkedIn.indexOf(' - ');
+  if (dashIdx !== -1) {
+    return {
+      name: withoutLinkedIn.slice(0, dashIdx).trim(),
+      role: withoutLinkedIn.slice(dashIdx + 3).trim(),
+    };
+  }
+  return { name: withoutLinkedIn, role: '' };
+}
+
+function ResearchPanel({ company, location }: { company: string; location: string | null }) {
+  const [results, setResults]   = useState<SearchResult[]>([]);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+  const [hasRun, setHasRun]     = useState(false);
+
+  const query = `${company} ${location ?? ''} software engineer linkedin profile`.trim();
+
+  async function handleSearch() {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await agentSearch(query, 6);
+      // Keep only results that link to LinkedIn profiles
+      const profiles = (data.results as SearchResult[]).filter(r =>
+        r.url.includes('linkedin.com/in/')
+      );
+      setResults(profiles);
+      setHasRun(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Search failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="mt-6 border border-gray-200 rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+        <div className="flex items-center gap-2">
+          <Users size={15} className="text-blue-500" />
+          <span className="text-sm font-semibold text-gray-700">Find People at {company}</span>
+        </div>
+        <button
+          onClick={handleSearch}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
+        >
+          {loading ? <Loader size={13} className="animate-spin" /> : <Users size={13} />}
+          {loading ? 'Searching...' : hasRun ? 'Search Again' : 'Find People'}
+        </button>
+      </div>
+
+      {loading && (
+        <div className="px-4 py-6 text-center text-sm text-gray-400">
+          <Loader size={16} className="animate-spin inline mr-2" />
+          Searching Bing for LinkedIn profiles — takes ~15 seconds...
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="px-4 py-3 text-sm text-red-600 bg-red-50">{error}</div>
+      )}
+
+      {!loading && hasRun && results.length === 0 && (
+        <div className="px-4 py-6 text-center text-sm text-gray-400">
+          No LinkedIn profiles found. Try a different search.
+        </div>
+      )}
+
+      {!loading && results.length > 0 && (
+        <div className="divide-y divide-gray-100">
+          {results.map((r, i) => {
+            const { name, role } = parseContact(r);
+            return (
+              <div key={i} className="flex items-start justify-between px-4 py-3 gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{name}</p>
+                  {role && <p className="text-xs text-gray-500 mt-0.5">{role}</p>}
+                  {r.snippet && (
+                    <p className="text-xs text-gray-400 mt-1 line-clamp-2">{r.snippet}</p>
+                  )}
+                </div>
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition font-medium"
+                >
+                  <ExternalLink size={11} /> Open
+                </a>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!loading && !hasRun && (
+        <div className="px-4 py-5 text-center text-sm text-gray-400">
+          Click Find People to search for LinkedIn profiles at {company}.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function JobDetail() {
   const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -312,6 +427,9 @@ export default function JobDetail() {
         {!isIndeed && hasDescription && (
           <GapAnalysisPanel jobId={jobId} />
         )}
+
+        {/* Research Panel - find people at this company on LinkedIn */}
+        <ResearchPanel company={job.company} location={job.location} />
 
         <div className="mt-6 mb-5">
           <p className="text-xs font-semibold text-gray-500 mb-1">Your Notes</p>
