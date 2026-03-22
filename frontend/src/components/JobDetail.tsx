@@ -213,14 +213,13 @@ function ResearchPanel({ company, location }: { company: string; location: strin
   const [error, setError]       = useState<string | null>(null);
   const [hasRun, setHasRun]     = useState(false);
 
-  const query = `${company} ${location ?? ''} software engineer linkedin profile`.trim();
+  const query = `"${company}" linkedin.com/in`.trim();
 
   async function handleSearch() {
     setLoading(true);
     setError(null);
     try {
       const data = await agentSearch(query, 6);
-      // Keep only results that link to LinkedIn profiles
       const profiles = (data.results as SearchResult[]).filter(r =>
         r.url.includes('linkedin.com/in/')
       );
@@ -263,7 +262,7 @@ function ResearchPanel({ company, location }: { company: string; location: strin
 
       {!loading && hasRun && results.length === 0 && (
         <div className="px-4 py-6 text-center text-sm text-gray-400">
-          No LinkedIn profiles found. Try a different search.
+          No results found for this company. Try a different search.
         </div>
       )}
 
