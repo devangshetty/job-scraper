@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
-from routers import jobs, scrape, llm, resume, settings
+from routers import jobs, scrape, llm, resume, settings, agent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -23,6 +23,7 @@ app.include_router(scrape.router)
 app.include_router(llm.router)
 app.include_router(resume.router)
 app.include_router(settings.router)
+app.include_router(agent.router)
 
 
 @app.get("/health")
