@@ -58,9 +58,18 @@ async def web_search(query: str, max_results: int = 5) -> List[Dict]:
         page = await context.new_page()
 
         try:
-            # Prime session — Bing needs cookies before search requests work
-            await page.goto("https://www.bing.com", wait_until="networkidle", timeout=20000)
+            # Prime session with homepage — gets cookies Bing needs for search
+            # domcontentloaded (not networkidle) so consent dialogs don't block us
+            await page.goto("https://www.bing.com", wait_until="domcontentloaded", timeout=20000)
             await asyncio.sleep(1)
+
+            # Dismiss cookie/consent dialog if present (appears on repeat visits)
+            for consent_sel in ["#bnp_btn_accept", "button[id*='accept']", "#consent-accept"]:
+                btn = await page.query_selector(consent_sel)
+                if btn:
+                    await btn.click()
+                    await asyncio.sleep(0.5)
+                    break
 
             logger.info(f"Searching Bing: {query}")
             await page.goto(
@@ -68,7 +77,7 @@ async def web_search(query: str, max_results: int = 5) -> List[Dict]:
                 wait_until="domcontentloaded",
                 timeout=20000,
             )
-            await page.wait_for_selector("li.b_algo", timeout=10000)
+            await page.wait_for_selector("li.b_algo", timeout=15000)
 
         except PWTimeout:
             logger.warning(f"Bing search timed out for: {query}")
