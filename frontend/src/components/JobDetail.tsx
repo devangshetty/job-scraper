@@ -207,7 +207,7 @@ function parseContact(result: SearchResult): { name: string; role: string } {
   return { name: withoutLinkedIn, role: '' };
 }
 
-function ResearchPanel({ company, location }: { company: string; location: string | null }) {
+function ResearchPanel({ company }: { company: string; location?: string | null }) {
   const [results, setResults]   = useState<SearchResult[]>([]);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
