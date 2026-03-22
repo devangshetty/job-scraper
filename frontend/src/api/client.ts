@@ -101,6 +101,10 @@ export const setModel           = setGapModel
 export const runGapAnalysis = (jobId: number) =>
   api.post(`/api/llm/gap-analysis/${jobId}`).then((r) => r.data)
 
+// --- Proxy download ---
+export const proxyDownloadUrl = (fileUrl: string) =>
+  `http://localhost:8000/api/proxy/download?url=${encodeURIComponent(fileUrl)}`
+
 // --- Agent ---
 export const agentSearch = (q: string, maxResults = 6) =>
   api.get('/api/agent/search', { params: { q, max_results: maxResults } }).then((r) => r.data)

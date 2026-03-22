@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchJob, updateJob, runGapAnalysis, fetchGapModelSettings, setGapModel, agentSearch } from '../api/client';
-import { ArrowLeft, ExternalLink, CheckCircle, Circle, Zap, AlertTriangle, Info, Lightbulb, ChevronDown, Users, Loader } from 'lucide-react';
+import { fetchJob, updateJob, runGapAnalysis, fetchGapModelSettings, setGapModel, agentSearch, proxyDownloadUrl } from '../api/client';
+import { ArrowLeft, ExternalLink, CheckCircle, Circle, Zap, AlertTriangle, Info, Lightbulb, ChevronDown, Users, Loader, Paperclip, Download } from 'lucide-react';
 
 function parseSkills(raw: string | string[]): string[] {
   if (Array.isArray(raw)) return raw;
@@ -424,6 +424,35 @@ export default function JobDetail() {
         {!isIndeed && hasDescription && (
           <GapAnalysisPanel jobId={jobId} />
         )}
+
+        {/* Attachments - iWorkForSA only */}
+        {job.source === 'iworkforsa' && (() => {
+          let attachments: { name: string; url: string }[] = [];
+          try { attachments = JSON.parse(job.attachments || '[]'); } catch { /* empty */ }
+          if (attachments.length === 0) return null;
+          return (
+            <div className="mt-6 border border-gray-200 rounded-xl overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
+                <Paperclip size={15} className="text-gray-500" />
+                <span className="text-sm font-semibold text-gray-700">Attachments</span>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {attachments.map((a, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-3 gap-3">
+                    <span className="text-sm text-gray-700 truncate">{a.name}</span>
+                    <a
+                      href={proxyDownloadUrl(a.url)}
+                      download
+                      className="shrink-0 flex items-center gap-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium"
+                    >
+                      <Download size={12} /> Download
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Research Panel - find people at this company on LinkedIn */}
         <ResearchPanel company={job.company} location={job.location} />

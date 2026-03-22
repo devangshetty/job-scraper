@@ -28,6 +28,7 @@ class Job(Base):
     is_applied        = Column(Boolean, default=False)
     notes             = Column(Text)
     source            = Column(Text)   # 'seek' | 'iworkforsa' | 'indeed'
+    attachments       = Column(Text, nullable=True)  # JSON: [{name, url}]
 
 
 class Setting(Base):

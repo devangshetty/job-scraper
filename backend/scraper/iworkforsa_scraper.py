@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 import logging
 import re
@@ -184,7 +185,29 @@ async def _fetch_job_detail(page, job_url: str) -> Dict:
             salary = sal_match.group(1).strip()[:80]  # cap length
             logger.info(f"iworkforsa: salary extracted: '{salary}'")
 
-        return {"description": description, "location": location, "salary": salary}
+        # Extract attachment links (PDFs, Word docs) from the detail page
+        attachments = []
+        try:
+            links = await frame.query_selector_all("a[href]")
+            for link in links:
+                href = (await link.get_attribute("href") or "").strip()
+                low = href.lower()
+                if not any(low.endswith(ext) for ext in (".pdf", ".doc", ".docx", ".rtf")):
+                    continue
+                name = (await link.inner_text()).strip() or href.split("/")[-1]
+                full_url = href if href.startswith("http") else BASE_URL + href
+                attachments.append({"name": name, "url": full_url})
+            if attachments:
+                logger.info(f"iworkforsa: {len(attachments)} attachment(s) found at {job_url}")
+        except Exception as e:
+            logger.warning(f"iworkforsa: attachment extraction error: {e}")
+
+        return {
+            "description": description,
+            "location":    location,
+            "salary":      salary,
+            "attachments": json.dumps(attachments) if attachments else None,
+        }
 
     except PWTimeout:
         logger.warning(f"iworkforsa timeout: {job_url}")
@@ -243,6 +266,8 @@ async def scrape_iworkforsa(should_stop=None) -> List[Dict]:
                     job["location"] = detail["location"]
                 if detail.get("salary"):
                     job["salary"] = detail["salary"]
+                if detail.get("attachments"):
+                    job["attachments"] = detail["attachments"]
                 await asyncio.sleep(random.uniform(1.5, 3.0))
 
             all_jobs.extend(new_cards)

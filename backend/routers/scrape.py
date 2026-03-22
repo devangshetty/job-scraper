@@ -107,11 +107,13 @@ def _save_jobs(raw_jobs: list, source: str) -> dict:
                         INSERT OR IGNORE INTO jobs
                             (job_title, company, location, salary, description,
                              posted_date, application_url, scrape_session_id,
-                             match_score, matched_skills, missing_skills, is_applied, source)
+                             match_score, matched_skills, missing_skills, is_applied, source,
+                             attachments)
                         VALUES
                             (:job_title, :company, :location, :salary, :description,
                              :posted_date, :application_url, :scrape_session_id,
-                             :match_score, :matched_skills, :missing_skills, 0, :source)
+                             :match_score, :matched_skills, :missing_skills, 0, :source,
+                             :attachments)
                     """),
                     {
                         "job_title":          j["job_title"],
@@ -126,6 +128,7 @@ def _save_jobs(raw_jobs: list, source: str) -> dict:
                         "matched_skills":     j.get("matched_skills", "[]"),
                         "missing_skills":     j.get("missing_skills", "[]"),
                         "source":             j.get("source", source),
+                        "attachments":        j.get("attachments"),
                     }
                 )
             conn.commit()
