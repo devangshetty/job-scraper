@@ -213,17 +213,22 @@ function ResearchPanel({ company, location }: { company: string; location: strin
   const [error, setError]       = useState<string | null>(null);
   const [hasRun, setHasRun]     = useState(false);
 
-  const query = `"${company}" linkedin.com/in`.trim();
-
   async function handleSearch() {
     setLoading(true);
     setError(null);
     try {
-      const data = await agentSearch(query, 6);
-      const profiles = (data.results as SearchResult[]).filter(r =>
-        r.url.includes('linkedin.com/in/')
-      );
-      setResults(profiles);
+      const [r1, r2] = await Promise.all([
+        agentSearch(`"${company}" linkedin.com/in recruiter OR HR OR "talent acquisition"`, 8),
+        agentSearch(`"${company}" linkedin.com/in engineer OR developer OR software`, 8),
+      ]);
+      const seen = new Set<string>();
+      const profiles = ([...r1.results, ...r2.results] as SearchResult[]).filter(r => {
+        if (!r.url.includes('linkedin.com/in/')) return false;
+        if (seen.has(r.url)) return false;
+        seen.add(r.url);
+        return true;
+      });
+      setResults(profiles.slice(0, 8));
       setHasRun(true);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Search failed');
@@ -252,7 +257,7 @@ function ResearchPanel({ company, location }: { company: string; location: strin
       {loading && (
         <div className="px-4 py-6 text-center text-sm text-gray-400">
           <Loader size={16} className="animate-spin inline mr-2" />
-          Searching Bing for LinkedIn profiles — takes ~15 seconds...
+          Searching Bing for recruiters & engineers at {company}...
         </div>
       )}
 
