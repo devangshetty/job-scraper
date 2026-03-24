@@ -1,3 +1,4 @@
+import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchJobs } from '../api/client';
@@ -19,6 +20,30 @@ function formatScrapedAt(raw: string): string {
   if (diffDays === 1) return 'yesterday';
   if (diffDays < 7)   return `${diffDays}d ago`;
   return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+}
+
+function scrapedDateLabel(raw: string | null | undefined): string {
+  if (!raw) return 'Unknown date';
+  const d = new Date(raw.endsWith('Z') ? raw : raw + 'Z');
+  if (isNaN(d.getTime())) return 'Unknown date';
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const jobDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((today.getTime() - jobDay.getTime()) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7)   return d.toLocaleDateString('en-AU', { weekday: 'long' });
+  return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function DateDivider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div className="flex-1 h-px bg-gray-200" />
+      <span className="text-xs font-medium text-gray-400 whitespace-nowrap">{label}</span>
+      <div className="flex-1 h-px bg-gray-200" />
+    </div>
+  );
 }
 
 const SOURCE_TABS = [
@@ -145,58 +170,73 @@ export default function JobList() {
         <div className="text-center text-gray-400 py-12">Loading...</div>
       ) : (
         <div className="flex flex-col gap-3">
-          {(data?.jobs ?? []).map((job: Job) => {
-            const skills = parseSkills(job.matched_skills);
-            const sourceLabel =
-              job.source === 'iworkforsa' ? 'iWorkForSA' :
-              job.source === 'indeed'     ? 'Indeed' :
-              job.source === 'seek'       ? 'Seek' : job.source ?? '';
-            return (
-              <div key={job.id}
-                onClick={() => navigate(`/jobs/${job.id}`)}
-                className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1 min-w-0 pr-3">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-800">{job.job_title}</h3>
-                      {job.source && (
-                        <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full shrink-0">
-                          {sourceLabel}
-                        </span>
-                      )}
+          {(() => {
+            const jobs = data?.jobs ?? [];
+            let lastLabel = '';
+            const items: React.ReactNode[] = [];
+
+            jobs.forEach((job: Job) => {
+              const label = scrapedDateLabel(job.scraped_at);
+              if (label !== lastLabel) {
+                items.push(<DateDivider key={`divider-${label}-${job.id}`} label={label} />);
+                lastLabel = label;
+              }
+
+              const skills = parseSkills(job.matched_skills);
+              const sourceLabel =
+                job.source === 'iworkforsa' ? 'iWorkForSA' :
+                job.source === 'indeed'     ? 'Indeed' :
+                job.source === 'seek'       ? 'Seek' : job.source ?? '';
+
+              items.push(
+                <div key={job.id}
+                  onClick={() => navigate(`/jobs/${job.id}`)}
+                  className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0 pr-3">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-gray-800">{job.job_title}</h3>
+                        {job.source && (
+                          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full shrink-0">
+                            {sourceLabel}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-3 text-sm text-gray-500 mt-1">
+                        <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
+                        {job.location    && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
+                        {job.salary      && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
+                        {job.posted_date && <span className="flex items-center gap-1"><Calendar size={13} />{job.posted_date}</span>}
+                        {sortBy === 'scraped_at' && job.scraped_at && (
+                          <span className="flex items-center gap-1 text-blue-500">
+                            <Clock size={13} />scraped {formatScrapedAt(job.scraped_at)}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-3 text-sm text-gray-500 mt-1">
-                      <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
-                      {job.location    && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
-                      {job.salary      && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
-                      {job.posted_date && <span className="flex items-center gap-1"><Calendar size={13} />{job.posted_date}</span>}
-                      {sortBy === 'scraped_at' && job.scraped_at && (
-                        <span className="flex items-center gap-1 text-blue-500">
-                          <Clock size={13} />scraped {formatScrapedAt(job.scraped_at)}
-                        </span>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <ScoreBadge score={job.match_score} />
+                      {job.is_applied && (
+                        <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">Applied</span>
                       )}
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <ScoreBadge score={job.match_score} />
-                    {job.is_applied && (
-                      <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">Applied</span>
-                    )}
-                  </div>
+                  {skills.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {skills.slice(0, 6).map(s => (
+                        <span key={s} className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">{s}</span>
+                      ))}
+                      {skills.length > 6 && (
+                        <span className="text-xs text-gray-400">+{skills.length - 6} more</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {skills.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {skills.slice(0, 6).map(s => (
-                      <span key={s} className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">{s}</span>
-                    ))}
-                    {skills.length > 6 && (
-                      <span className="text-xs text-gray-400">+{skills.length - 6} more</span>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+              );
+            });
+
+            return items;
+          })()}
         </div>
       )}
 
