@@ -176,10 +176,12 @@ export default function JobList() {
             const items: React.ReactNode[] = [];
 
             jobs.forEach((job: Job) => {
-              const label = scrapedDateLabel(job.scraped_at);
-              if (label !== lastLabel) {
-                items.push(<DateDivider key={`divider-${label}-${job.id}`} label={label} />);
-                lastLabel = label;
+              if (sortBy === 'scraped_at') {
+                const label = scrapedDateLabel(job.scraped_at);
+                if (label !== lastLabel) {
+                  items.push(<DateDivider key={`divider-${label}-${job.id}`} label={label} />);
+                  lastLabel = label;
+                }
               }
 
               const skills = parseSkills(job.matched_skills);
