@@ -4,17 +4,18 @@ import Dashboard  from './components/Dashboard';
 import JobList    from './components/JobList';
 import JobDetail  from './components/JobDetail';
 import ResumePage from './components/ResumePage';
-import { LayoutDashboard, List, Loader, FileText } from 'lucide-react';
+import { LayoutDashboard, Briefcase, FileText, Zap, Loader } from 'lucide-react';
 import { fetchScrapeStatus } from './api/client';
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } },
 });
 
-const navCls = ({ isActive }: { isActive: boolean }) =>
-  `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition ${
-    isActive ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-  }`;
+const NAV_ITEMS = [
+  { to: '/',       icon: LayoutDashboard, label: 'Dashboard', end: true },
+  { to: '/jobs',   icon: Briefcase,       label: 'Jobs',      end: false },
+  { to: '/resume', icon: FileText,        label: 'Resume',    end: false },
+];
 
 function ScrapeIndicator() {
   const { data } = useQuery({
@@ -27,32 +28,22 @@ function ScrapeIndicator() {
     staleTime: 0,
   });
 
-  const seekRunning   = data?.seek.running;
-  const govRunning    = data?.iworkforsa.running;
-  const indeedRunning = data?.indeed?.running;
+  const running = [
+    data?.seek?.running       && 'Seek',
+    data?.iworkforsa?.running && 'iWorkForSA',
+    data?.indeed?.running     && 'Indeed',
+  ].filter(Boolean) as string[];
 
-  if (!seekRunning && !govRunning && !indeedRunning) return null;
+  if (!running.length) return null;
 
   return (
-    <div className="mx-2 mt-4 flex flex-col gap-1">
-      {seekRunning && (
-        <div className="flex items-center gap-2 bg-blue-50 text-blue-600 text-xs px-3 py-2 rounded-lg">
-          <Loader size={13} className="animate-spin shrink-0" />
-          <span>Seek scraping...</span>
+    <div className="px-3 pb-4 flex flex-col gap-1.5">
+      {running.map(src => (
+        <div key={src} className="flex items-center gap-2 text-xs text-violet-300 bg-violet-500/10 px-3 py-2 rounded-lg border border-violet-500/20">
+          <Loader size={11} className="animate-spin shrink-0" />
+          <span>{src} scraping…</span>
         </div>
-      )}
-      {govRunning && (
-        <div className="flex items-center gap-2 bg-orange-50 text-orange-600 text-xs px-3 py-2 rounded-lg">
-          <Loader size={13} className="animate-spin shrink-0" />
-          <span>iWorkForSA scraping...</span>
-        </div>
-      )}
-      {indeedRunning && (
-        <div className="flex items-center gap-2 bg-purple-50 text-purple-600 text-xs px-3 py-2 rounded-lg">
-          <Loader size={13} className="animate-spin shrink-0" />
-          <span>Indeed scraping...</span>
-        </div>
-      )}
+      ))}
     </div>
   );
 }
@@ -62,14 +53,48 @@ export default function App() {
     <QueryClientProvider client={qc}>
       <BrowserRouter>
         <div className="min-h-screen bg-gray-50 flex">
-          <aside className="w-52 bg-white border-r flex flex-col p-4 gap-1 fixed h-full">
-            <p className="text-lg font-bold text-gray-800 mb-4 px-2">JobTracker</p>
-            <NavLink to="/"       className={navCls}><LayoutDashboard size={16} />Dashboard</NavLink>
-            <NavLink to="/jobs"   className={navCls}><List size={16} />Job Listings</NavLink>
-            <NavLink to="/resume" className={navCls}><FileText size={16} />Resume</NavLink>
+          {/* Sidebar */}
+          <aside className="w-56 bg-gray-900 flex flex-col fixed h-full z-10">
+            {/* Logo */}
+            <div className="px-4 h-14 flex items-center gap-2.5 border-b border-white/10 shrink-0">
+              <div className="w-7 h-7 bg-violet-600 rounded-lg flex items-center justify-center shrink-0">
+                <Zap size={14} className="text-white" />
+              </div>
+              <span className="text-white font-semibold tracking-tight text-sm">JobTracker</span>
+            </div>
+
+            {/* Nav */}
+            <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
+              {NAV_ITEMS.map(({ to, icon: Icon, label, end }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={end}
+                  className={({ isActive }) =>
+                    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      isActive
+                        ? 'bg-violet-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    }`
+                  }
+                >
+                  <Icon size={15} />
+                  {label}
+                </NavLink>
+              ))}
+            </nav>
+
+            {/* Running scrape indicators */}
             <ScrapeIndicator />
+
+            {/* Footer */}
+            <div className="px-4 py-3 border-t border-white/10">
+              <p className="text-xs text-gray-600">Adelaide, SA · 2026</p>
+            </div>
           </aside>
-          <main className="ml-52 flex-1 overflow-y-auto">
+
+          {/* Content */}
+          <main className="ml-56 flex-1 min-h-screen">
             <Routes>
               <Route path="/"         element={<Dashboard />} />
               <Route path="/jobs"     element={<JobList />} />

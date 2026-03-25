@@ -2,7 +2,11 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchJob, updateJob, runGapAnalysis, fetchGapModelSettings, setGapModel, agentSearch, proxyDownloadUrl } from '../api/client';
-import { ArrowLeft, ExternalLink, CheckCircle, Circle, Zap, AlertTriangle, Info, Lightbulb, ChevronDown, Users, Loader, Paperclip, Download } from 'lucide-react';
+import {
+  ArrowLeft, ExternalLink, CheckCircle, Circle, Zap, AlertTriangle,
+  Info, Lightbulb, ChevronDown, Users, Loader, Paperclip, Download,
+  MapPin, Building2, DollarSign, Calendar,
+} from 'lucide-react';
 
 function parseSkills(raw: string | string[]): string[] {
   if (Array.isArray(raw)) return raw;
@@ -19,127 +23,117 @@ function applyButtonLabel(source: string | null | undefined): string {
   }
 }
 
-const VERDICT_STYLES: Record<string, string> = {
-  'Strong Match':  'bg-green-100 text-green-700 border-green-300',
-  'Good Match':    'bg-blue-100 text-blue-700 border-blue-300',
-  'Partial Match': 'bg-yellow-100 text-yellow-700 border-yellow-300',
-  'Weak Match':    'bg-red-100 text-red-600 border-red-300',
-}
+const SOURCE_COLORS: Record<string, string> = {
+  seek:       'bg-blue-50 text-blue-600 border border-blue-100',
+  indeed:     'bg-violet-50 text-violet-600 border border-violet-100',
+  iworkforsa: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
+};
+
+// ── Gap Analysis Panel ────────────────────────────────────────────────────────
+
+const VERDICT_STYLES: Record<string, { bar: string; badge: string }> = {
+  'Strong Match':  { bar: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-700 border border-emerald-200' },
+  'Good Match':    { bar: 'bg-blue-500',    badge: 'bg-blue-50 text-blue-700 border border-blue-200' },
+  'Partial Match': { bar: 'bg-amber-500',   badge: 'bg-amber-50 text-amber-700 border border-amber-200' },
+  'Weak Match':    { bar: 'bg-red-500',     badge: 'bg-red-50 text-red-600 border border-red-200' },
+};
 
 function GapAnalysisPanel({ jobId }: { jobId: number }) {
-  const qc = useQueryClient()
-  const [result, setResult] = useState<Record<string, unknown> | null>(null)
-  const [selectedModel, setSelectedModel] = useState<string | null>(null)
+  const qc = useQueryClient();
+  const [result, setResult]       = useState<Record<string, unknown> | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
 
-  const { data: modelData } = useQuery({
-    queryKey: ['gapModel'],
-    queryFn:  fetchGapModelSettings,
-    staleTime: 30_000,
-  })
-
-  const activeModel = selectedModel ?? modelData?.current_model ?? 'llama-3.1-8b-instant'
+  const { data: modelData } = useQuery({ queryKey: ['gapModel'], queryFn: fetchGapModelSettings, staleTime: 30_000 });
+  const activeModel = selectedModel ?? modelData?.current_model ?? 'llama-3.1-8b-instant';
 
   const mutation = useMutation({
     mutationFn: async () => {
-      // persist the chosen model then run analysis
       if (selectedModel && selectedModel !== modelData?.current_model) {
-        await setGapModel(selectedModel)
-        qc.invalidateQueries({ queryKey: ['gapModel'] })
+        await setGapModel(selectedModel);
+        qc.invalidateQueries({ queryKey: ['gapModel'] });
       }
-      return runGapAnalysis(jobId)
+      return runGapAnalysis(jobId);
     },
     onSuccess: (data) => setResult(data),
-  })
+  });
 
-  const running = mutation.isPending
-  const error   = mutation.error?.message ?? null
-
-  const verdictStyle = result
-    ? (VERDICT_STYLES[(result.match_verdict as string)] ?? 'bg-gray-100 text-gray-600 border-gray-300')
-    : ''
+  const running      = mutation.isPending;
+  const error        = mutation.error?.message ?? null;
+  const verdictKey   = result ? (result.match_verdict as string) : null;
+  const verdictStyle = verdictKey ? (VERDICT_STYLES[verdictKey] ?? { bar: 'bg-gray-300', badge: 'bg-gray-100 text-gray-600' }) : null;
 
   return (
-    <div className="mt-6 border border-gray-200 rounded-xl overflow-hidden">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+    <div className="mt-6 bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+      {verdictStyle && <div className={`h-0.5 w-full ${verdictStyle.bar}`} />}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
         <div className="flex items-center gap-2">
-          <Zap size={15} className="text-indigo-500" />
-          <span className="text-sm font-semibold text-gray-700">AI Gap Analysis</span>
-          {result && (
-            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${verdictStyle}`}>
-              {result.match_verdict as string}
+          <div className="w-7 h-7 bg-violet-50 rounded-lg flex items-center justify-center">
+            <Zap size={13} className="text-violet-600" />
+          </div>
+          <span className="text-sm font-semibold text-gray-800">AI Gap Analysis</span>
+          {verdictKey && verdictStyle && (
+            <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium border ${verdictStyle.badge}`}>
+              {verdictKey}
             </span>
           )}
         </div>
-
-        {/* Model dropdown */}
         {modelData && (
           <div className="flex items-center gap-2">
             <div className="relative">
               <select
                 value={activeModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 pr-6 bg-white text-gray-600 appearance-none cursor-pointer hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                onChange={e => setSelectedModel(e.target.value)}
+                className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 pr-7 bg-white text-gray-600 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-violet-400"
               >
                 {modelData.available_models.map((m: { id: string; label: string }) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>
-              <ChevronDown size={12} className="absolute right-1.5 top-2 text-gray-400 pointer-events-none" />
+              <ChevronDown size={11} className="absolute right-2 top-2.5 text-gray-400 pointer-events-none" />
             </div>
             <button
               onClick={() => mutation.mutate()}
               disabled={running}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 disabled:opacity-50 transition"
             >
-              {running ? 'Analysing...' : result ? 'Re-run' : 'Run Analysis'}
+              {running ? 'Analysing…' : result ? 'Re-run' : 'Run Analysis'}
             </button>
           </div>
         )}
       </div>
 
-      {/* Error */}
       {error && (
-        <div className="px-4 py-3 bg-red-50 text-sm text-red-600 border-b border-red-200">
-          {error}
-        </div>
+        <div className="px-5 py-3 bg-red-50 text-sm text-red-600 border-b border-red-100">{error}</div>
       )}
 
-      {/* Loading state */}
       {running && (
-        <div className="px-4 py-6 text-center text-sm text-gray-400">
-          Calling Groq API - usually takes 2-5 seconds...
+        <div className="px-5 py-8 text-center text-sm text-gray-400 flex items-center justify-center gap-2">
+          <div className="w-4 h-4 border-2 border-gray-200 border-t-violet-600 rounded-full animate-spin" />
+          Calling Groq API — usually takes 2–5 seconds…
         </div>
       )}
 
-      {/* Results */}
       {result && !running && (
-        <div className="p-4 flex flex-col gap-4">
-
-          {/* Summary */}
+        <div className="p-5 flex flex-col gap-4">
           <p className="text-sm text-gray-700 leading-relaxed">{result.summary as string}</p>
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* You have */}
             <div>
-              <p className="text-xs font-semibold text-green-700 flex items-center gap-1 mb-1.5">
+              <p className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5 mb-2">
                 <CheckCircle size={12} /> You have
               </p>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1.5">
                 {(result.you_have as string[]).map(s => (
-                  <span key={s} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded">{s}</span>
+                  <span key={s} className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-lg">{s}</span>
                 ))}
               </div>
             </div>
-
-            {/* Missing */}
             <div>
-              <p className="text-xs font-semibold text-red-600 flex items-center gap-1 mb-1.5">
+              <p className="text-xs font-semibold text-red-600 flex items-center gap-1.5 mb-2">
                 <AlertTriangle size={12} /> You are missing
               </p>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1.5">
                 {(result.you_are_missing as string[]).map(s => (
-                  <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded">{s}</span>
+                  <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded-lg">{s}</span>
                 ))}
                 {(result.you_are_missing as string[]).length === 0 && (
                   <span className="text-xs text-gray-400">Nothing significant</span>
@@ -147,30 +141,26 @@ function GapAnalysisPanel({ jobId }: { jobId: number }) {
               </div>
             </div>
           </div>
-
-          {/* You can claim */}
           {(result.you_can_claim as string[]).length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-blue-600 flex items-center gap-1 mb-1.5">
+              <p className="text-xs font-semibold text-blue-600 flex items-center gap-1.5 mb-2">
                 <Lightbulb size={12} /> Highlight in cover letter
               </p>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1.5">
                 {(result.you_can_claim as string[]).map(s => (
-                  <span key={s} className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded">{s}</span>
+                  <span key={s} className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-lg">{s}</span>
                 ))}
               </div>
             </div>
           )}
-
-          {/* Red flags */}
           {(result.red_flags as string[]).length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-orange-600 flex items-center gap-1 mb-1.5">
+              <p className="text-xs font-semibold text-amber-600 flex items-center gap-1.5 mb-2">
                 <Info size={12} /> Red flags
               </p>
-              <ul className="list-disc list-inside">
+              <ul className="list-disc list-inside space-y-0.5">
                 {(result.red_flags as string[]).map(s => (
-                  <li key={s} className="text-xs text-orange-700">{s}</li>
+                  <li key={s} className="text-xs text-amber-700">{s}</li>
                 ))}
               </ul>
             </div>
@@ -178,49 +168,40 @@ function GapAnalysisPanel({ jobId }: { jobId: number }) {
         </div>
       )}
 
-      {/* Empty state */}
       {!result && !running && !error && (
-        <div className="px-4 py-6 text-center text-sm text-gray-400">
-          Select a model and click Run Analysis to get an AI-powered gap analysis for this job.
+        <div className="px-5 py-8 text-center text-sm text-gray-400">
+          Select a model and click <strong className="text-gray-600">Run Analysis</strong> for an AI-powered gap analysis.
         </div>
       )}
     </div>
-  )
+  );
 }
 
-interface SearchResult {
-  title:   string;
-  url:     string;
-  snippet: string;
-}
+// ── Research Panel ────────────────────────────────────────────────────────────
+
+interface SearchResult { title: string; url: string; snippet: string; }
 
 function parseContact(result: SearchResult): { name: string; role: string } {
-  // Bing titles come as "Name - Role at Company | LinkedIn"
   const withoutLinkedIn = result.title.replace(/\s*\|\s*LinkedIn.*$/i, '').trim();
   const dashIdx = withoutLinkedIn.indexOf(' - ');
   if (dashIdx !== -1) {
-    return {
-      name: withoutLinkedIn.slice(0, dashIdx).trim(),
-      role: withoutLinkedIn.slice(dashIdx + 3).trim(),
-    };
+    return { name: withoutLinkedIn.slice(0, dashIdx).trim(), role: withoutLinkedIn.slice(dashIdx + 3).trim() };
   }
   return { name: withoutLinkedIn, role: '' };
 }
 
 function ResearchPanel({ company }: { company: string; location?: string | null }) {
-  const [results, setResults]   = useState<SearchResult[]>([]);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState<string | null>(null);
-  const [hasRun, setHasRun]     = useState(false);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+  const [hasRun, setHasRun]   = useState(false);
 
   async function handleSearch() {
     setLoading(true);
     setError(null);
     try {
-      const data = await agentSearch(`"${company}" linkedin.com/in`, 10);
-      const profiles = (data.results as SearchResult[]).filter(r =>
-        r.url.includes('linkedin.com/in/')
-      );
+      const data     = await agentSearch(`"${company}" linkedin.com/in`, 10);
+      const profiles = (data.results as SearchResult[]).filter(r => r.url.includes('linkedin.com/in/'));
       setResults(profiles);
       setHasRun(true);
     } catch (e: unknown) {
@@ -231,56 +212,49 @@ function ResearchPanel({ company }: { company: string; location?: string | null 
   }
 
   return (
-    <div className="mt-6 border border-gray-200 rounded-xl overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+    <div className="mt-6 bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
         <div className="flex items-center gap-2">
-          <Users size={15} className="text-blue-500" />
-          <span className="text-sm font-semibold text-gray-700">Find People at {company}</span>
+          <div className="w-7 h-7 bg-blue-50 rounded-lg flex items-center justify-center">
+            <Users size={13} className="text-blue-600" />
+          </div>
+          <span className="text-sm font-semibold text-gray-800">People at {company}</span>
         </div>
         <button
           onClick={handleSearch}
           disabled={loading}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
         >
-          {loading ? <Loader size={13} className="animate-spin" /> : <Users size={13} />}
-          {loading ? 'Searching...' : hasRun ? 'Search Again' : 'Find People'}
+          {loading ? <Loader size={12} className="animate-spin" /> : <Users size={12} />}
+          {loading ? 'Searching…' : hasRun ? 'Search Again' : 'Find People'}
         </button>
       </div>
 
       {loading && (
-        <div className="px-4 py-6 text-center text-sm text-gray-400">
-          <Loader size={16} className="animate-spin inline mr-2" />
-          Searching for LinkedIn profiles at {company}...
+        <div className="px-5 py-8 text-center text-sm text-gray-400 flex items-center justify-center gap-2">
+          <div className="w-4 h-4 border-2 border-gray-200 border-t-blue-600 rounded-full animate-spin" />
+          Searching LinkedIn profiles for {company}…
         </div>
       )}
-
       {error && !loading && (
-        <div className="px-4 py-3 text-sm text-red-600 bg-red-50">{error}</div>
+        <div className="px-5 py-3 text-sm text-red-600 bg-red-50">{error}</div>
       )}
-
       {!loading && hasRun && results.length === 0 && (
-        <div className="px-4 py-6 text-center text-sm text-gray-400">
-          No results found for this company. Try a different search.
-        </div>
+        <div className="px-5 py-8 text-center text-sm text-gray-400">No LinkedIn profiles found.</div>
       )}
-
       {!loading && results.length > 0 && (
-        <div className="divide-y divide-gray-100">
+        <div className="divide-y divide-gray-50">
           {results.map((r, i) => {
             const { name, role } = parseContact(r);
             return (
-              <div key={i} className="flex items-start justify-between px-4 py-3 gap-3">
+              <div key={i} className="flex items-center justify-between px-5 py-3.5 gap-4 hover:bg-gray-50 transition">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800">{name}</p>
-                  {role && <p className="text-xs text-gray-500 mt-0.5">{role}</p>}
-                  {r.snippet && (
-                    <p className="text-xs text-gray-400 mt-1 line-clamp-2">{r.snippet}</p>
-                  )}
+                  <p className="text-sm font-medium text-gray-800 truncate">{name}</p>
+                  {role && <p className="text-xs text-gray-400 mt-0.5 truncate">{role}</p>}
+                  {r.snippet && <p className="text-xs text-gray-400 mt-1 line-clamp-1">{r.snippet}</p>}
                 </div>
                 <a
-                  href={r.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={r.url} target="_blank" rel="noopener noreferrer"
                   className="shrink-0 flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition font-medium"
                 >
                   <ExternalLink size={11} /> Open
@@ -290,15 +264,16 @@ function ResearchPanel({ company }: { company: string; location?: string | null 
           })}
         </div>
       )}
-
       {!loading && !hasRun && (
-        <div className="px-4 py-5 text-center text-sm text-gray-400">
-          Click Find People to search for LinkedIn profiles at {company}.
+        <div className="px-5 py-6 text-center text-sm text-gray-400">
+          Click <strong className="text-gray-600">Find People</strong> to search LinkedIn profiles at {company}.
         </div>
       )}
     </div>
   );
 }
+
+// ── JobDetail ─────────────────────────────────────────────────────────────────
 
 export default function JobDetail() {
   const { id }   = useParams<{ id: string }>();
@@ -324,165 +299,203 @@ export default function JobDetail() {
     },
   });
 
-  if (isLoading) return <div className="p-8 text-gray-400 text-center">Loading...</div>;
-  if (!job)      return <div className="p-8 text-red-500">Job not found.</div>;
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-24 text-gray-400 text-sm gap-2">
+      <div className="w-4 h-4 border-2 border-gray-200 border-t-violet-600 rounded-full animate-spin" />
+      Loading…
+    </div>
+  );
+  if (!job) return <div className="p-8 text-red-500 text-sm">Job not found.</div>;
 
-  const matchedSkills = parseSkills(job.matched_skills);
-  const missingSkills = parseSkills(job.missing_skills);
-  const isIndeed      = job.source === 'indeed';
+  const matchedSkills  = parseSkills(job.matched_skills);
+  const missingSkills  = parseSkills(job.missing_skills);
+  const isIndeed       = job.source === 'indeed';
   const hasDescription = !!job.description && job.description.length > 80;
+  const sourceCls      = SOURCE_COLORS[job.source ?? ''] ?? 'bg-gray-100 text-gray-500';
+  const sourceLabel    = job.source === 'iworkforsa' ? 'iWorkForSA' : job.source === 'indeed' ? 'Indeed' : job.source === 'seek' ? 'Seek' : job.source ?? '';
 
   const scoreColor = !job.match_score ? 'text-gray-400' :
-                     job.match_score >= 0.7 ? 'text-green-600' :
-                     job.match_score >= 0.5 ? 'text-yellow-600' : 'text-red-600';
+                     job.match_score >= 0.7 ? 'text-emerald-600' :
+                     job.match_score >= 0.5 ? 'text-amber-500' : 'text-red-500';
 
-  const sourceLabel =
-    job.source === 'iworkforsa' ? 'iWorkForSA' :
-    job.source === 'indeed'     ? 'Indeed' :
-    job.source === 'seek'       ? 'Seek' : job.source ?? '';
+  let attachments: { name: string; url: string }[] = [];
+  try { attachments = JSON.parse((job as Record<string, string>).attachments || '[]'); } catch { /* empty */ }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <button onClick={() => navigate(-1)}
-        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-4">
-        <ArrowLeft size={14} /> Back
+    <div className="p-8 max-w-3xl mx-auto">
+      {/* Back */}
+      <button
+        onClick={() => navigate(-1)}
+        className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 mb-6 transition"
+      >
+        <ArrowLeft size={14} /> Back to Jobs
       </button>
 
-      <div className="bg-white rounded-xl border p-6">
-        {/* Header */}
-        <div className="flex justify-between items-start mb-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-gray-800">{job.job_title}</h1>
-              {job.source && (
-                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{sourceLabel}</span>
-              )}
+      {/* Main card */}
+      <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+        {/* Score accent bar */}
+        <div className={`h-1 w-full ${
+          !job.match_score ? 'bg-gray-200' :
+          job.match_score >= 0.7 ? 'bg-emerald-500' :
+          job.match_score >= 0.5 ? 'bg-amber-400' : 'bg-red-400'
+        }`} />
+
+        <div className="p-6">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap mb-2">
+                {job.source && (
+                  <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${sourceCls}`}>{sourceLabel}</span>
+                )}
+                {job.is_applied && (
+                  <span className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-2.5 py-0.5 rounded-full font-medium">Applied</span>
+                )}
+              </div>
+              <h1 className="text-xl font-bold text-gray-900 tracking-tight leading-snug">{job.job_title}</h1>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-sm text-gray-500">
+                <span className="flex items-center gap-1.5"><Building2 size={13} className="text-gray-400" />{job.company}</span>
+                {job.location    && <span className="flex items-center gap-1.5"><MapPin size={13} className="text-gray-400" />{job.location}</span>}
+                {job.salary      && <span className="flex items-center gap-1.5"><DollarSign size={13} className="text-gray-400" />{job.salary}</span>}
+                {job.posted_date && <span className="flex items-center gap-1.5"><Calendar size={13} className="text-gray-400" />Posted {job.posted_date}</span>}
+              </div>
             </div>
-            <p className="text-gray-500">{job.company} &middot; {job.location}</p>
-            {job.salary      && <p className="text-sm text-gray-500 mt-0.5">{job.salary}</p>}
-            {job.posted_date && <p className="text-xs text-gray-400 mt-0.5">Posted: {job.posted_date}</p>}
+            {job.match_score !== null && (
+              <div className="text-right shrink-0">
+                <p className={`text-4xl font-bold tracking-tight ${scoreColor}`}>
+                  {Math.round((job.match_score ?? 0) * 100)}%
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">match</p>
+              </div>
+            )}
           </div>
-          {job.match_score !== null && (
-            <div className="text-right">
-              <p className={`text-3xl font-bold ${scoreColor}`}>{Math.round((job.match_score ?? 0) * 100)}%</p>
-              <p className="text-xs text-gray-400">match score</p>
+
+          {/* Indeed notice */}
+          {isIndeed && (
+            <div className="mb-5 p-3.5 bg-violet-50 border border-violet-100 rounded-xl text-sm text-violet-700">
+              Indeed limits automated access to full job descriptions. Match score is based on the short snippet only.
+              Click <strong>Apply on Indeed</strong> below to view the full listing.
             </div>
           )}
-        </div>
 
-        {isIndeed && (
-          <div className="mb-5 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-sm text-blue-700">
-              Indeed limits automated access to full job descriptions. Match score and skills are based on the short snippet only.
-              Click <strong>Apply on Indeed</strong> below to view the full listing.
-            </p>
-          </div>
-        )}
-
-        {!isIndeed && (
-          hasDescription ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+          {/* Skills */}
+          {!isIndeed && hasDescription && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
               <div>
-                <p className="text-xs font-semibold text-green-700 mb-1">Matched Skills</p>
-                <div className="flex flex-wrap gap-1">
+                <p className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5 mb-2">
+                  <CheckCircle size={11} /> Matched Skills
+                </p>
+                <div className="flex flex-wrap gap-1.5">
                   {matchedSkills.length > 0
                     ? matchedSkills.map(s => (
-                        <span key={s} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded">{s}</span>
+                        <span key={s} className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-lg">{s}</span>
                       ))
                     : <span className="text-xs text-gray-400">None detected</span>
                   }
                 </div>
               </div>
               <div>
-                <p className="text-xs font-semibold text-red-600 mb-1">Missing Skills</p>
-                <div className="flex flex-wrap gap-1">
+                <p className="text-xs font-semibold text-red-600 flex items-center gap-1.5 mb-2">
+                  <AlertTriangle size={11} /> Missing Skills
+                </p>
+                <div className="flex flex-wrap gap-1.5">
                   {missingSkills.slice(0, 10).map(s => (
-                    <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded">{s}</span>
+                    <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded-lg">{s}</span>
                   ))}
                 </div>
               </div>
             </div>
-          ) : (
-            <div className="mb-5 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-sm text-yellow-700">
-                No description was scraped for this job. Skills and match score may not be accurate.
-              </p>
-            </div>
-          )
-        )}
+          )}
 
-        <div className="mb-5">
-          <p className="text-xs font-semibold text-gray-500 mb-1">
-            {isIndeed ? 'Snippet' : 'Job Description'}
-          </p>
-          <div className="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 rounded p-3 max-h-80 overflow-y-auto leading-relaxed">
-            {job.description || 'No description available.'}
+          {!isIndeed && !hasDescription && (
+            <div className="mb-5 p-3.5 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-700">
+              No description was scraped for this job. Skills and match score may not be accurate.
+            </div>
+          )}
+
+          {/* Description */}
+          <div className="mb-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+              {isIndeed ? 'Snippet' : 'Job Description'}
+            </p>
+            <div className="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 rounded-xl p-4 max-h-80 overflow-y-auto leading-relaxed border border-gray-100">
+              {job.description || 'No description available.'}
+            </div>
           </div>
         </div>
+      </div>
 
-        {/* Gap Analysis Panel - skip for Indeed (no full JD) */}
-        {!isIndeed && hasDescription && (
-          <GapAnalysisPanel jobId={jobId} />
-        )}
+      {/* Gap Analysis */}
+      {!isIndeed && hasDescription && <GapAnalysisPanel jobId={jobId} />}
 
-        {/* Attachments - iWorkForSA only */}
-        {job.source === 'iworkforsa' && (() => {
-          let attachments: { name: string; url: string }[] = [];
-          try { attachments = JSON.parse(job.attachments || '[]'); } catch { /* empty */ }
-          if (attachments.length === 0) return null;
-          return (
-            <div className="mt-6 border border-gray-200 rounded-xl overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-                <Paperclip size={15} className="text-gray-500" />
-                <span className="text-sm font-semibold text-gray-700">Attachments</span>
-              </div>
-              <div className="divide-y divide-gray-100">
-                {attachments.map((a, i) => (
-                  <div key={i} className="flex items-center justify-between px-4 py-3 gap-3">
-                    <span className="text-sm text-gray-700 truncate">{a.name}</span>
-                    <a
-                      href={proxyDownloadUrl(a.url)}
-                      download
-                      className="shrink-0 flex items-center gap-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium"
-                    >
-                      <Download size={12} /> Download
-                    </a>
-                  </div>
-                ))}
-              </div>
+      {/* Attachments */}
+      {job.source === 'iworkforsa' && attachments.length > 0 && (
+        <div className="mt-6 bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+          <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
+            <div className="w-7 h-7 bg-gray-50 rounded-lg flex items-center justify-center">
+              <Paperclip size={13} className="text-gray-500" />
             </div>
-          );
-        })()}
-
-        {/* Research Panel - find people at this company on LinkedIn */}
-        <ResearchPanel company={job.company} location={job.location} />
-
-        <div className="mt-6 mb-5">
-          <p className="text-xs font-semibold text-gray-500 mb-1">Your Notes</p>
-          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
-            placeholder="Add notes about this role..."
-            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none" />
-          <button onClick={() => updateM.mutate({ notes })}
-            className="mt-1 text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded transition">
-            Save Notes
-          </button>
+            <span className="text-sm font-semibold text-gray-800">Attachments</span>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {attachments.map((a, i) => (
+              <div key={i} className="flex items-center justify-between px-5 py-3.5 gap-4 hover:bg-gray-50 transition">
+                <span className="text-sm text-gray-700 truncate">{a.name}</span>
+                <a
+                  href={proxyDownloadUrl(a.url)}
+                  download
+                  className="shrink-0 flex items-center gap-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium"
+                >
+                  <Download size={12} /> Download
+                </a>
+              </div>
+            ))}
+          </div>
         </div>
+      )}
 
-        <div className="flex gap-3">
-          <button onClick={() => updateM.mutate({ is_applied: !job.is_applied })}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
-              job.is_applied
-                ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}>
-            {job.is_applied ? <CheckCircle size={15} /> : <Circle size={15} />}
-            {job.is_applied ? 'Applied' : 'Mark as Applied'}
-          </button>
-          <a href={job.application_url} target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
-            <ExternalLink size={15} /> {applyButtonLabel(job.source)}
-          </a>
-        </div>
+      {/* People / Research Panel */}
+      <ResearchPanel company={job.company} location={job.location} />
+
+      {/* Notes */}
+      <div className="mt-6 bg-white border border-gray-100 rounded-2xl shadow-sm p-5">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Your Notes</p>
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          rows={3}
+          placeholder="Add notes about this role…"
+          className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent resize-none bg-gray-50"
+        />
+        <button
+          onClick={() => updateM.mutate({ notes })}
+          className="mt-2 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium"
+        >
+          Save Notes
+        </button>
+      </div>
+
+      {/* Actions */}
+      <div className="mt-4 flex gap-3">
+        <button
+          onClick={() => updateM.mutate({ is_applied: !job.is_applied })}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
+            job.is_applied
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          {job.is_applied ? <CheckCircle size={15} /> : <Circle size={15} />}
+          {job.is_applied ? 'Applied' : 'Mark as Applied'}
+        </button>
+        <a
+          href={job.application_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-violet-700 transition"
+        >
+          <ExternalLink size={15} /> {applyButtonLabel(job.source)}
+        </a>
       </div>
     </div>
   );
