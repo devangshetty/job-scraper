@@ -52,9 +52,9 @@ export default function App() {
   return (
     <QueryClientProvider client={qc}>
       <BrowserRouter>
-        <div className="min-h-screen bg-gray-50 flex">
+        <div className="min-h-screen bg-[#f0f1f3] flex">
           {/* Sidebar */}
-          <aside className="w-56 bg-gray-900 flex flex-col fixed h-full z-10">
+          <aside className="w-56 bg-[#1c1f26] flex flex-col fixed h-full z-10" style={{boxShadow: '4px 0 24px rgba(0,0,0,0.18)'}}>
             {/* Logo */}
             <div className="px-4 h-14 flex items-center gap-2.5 border-b border-white/10 shrink-0">
               <div className="w-7 h-7 bg-violet-600 rounded-lg flex items-center justify-center shrink-0">
