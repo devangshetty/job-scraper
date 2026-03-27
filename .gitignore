@@ -17,3 +17,8 @@ Thumbs.db
 # Claude Code — local instructions, never push
 CLAUDE.md
 .claude/
+
+# Misc local files
+*.docx
+*.md~
+is-it-possible-to-code-a-web-s-btgv4sYtTsmVFjVSZUelgA.md
